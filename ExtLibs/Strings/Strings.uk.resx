@@ -687,4 +687,10 @@ MissionPlanner очікує на дійсних 2 серцебиття пере�
   <data name="Loading" xml:space="preserve">
     <value>Завантаження</value>
   </data>
+  <data name="ZeroAltWarningCopter" xml:space="preserve">
+    <value>WP# {0} має нульову висоту, це означає відсутність змін висоти! Якщо вам потрібна нульова висота, змініть її на 0,01 м. Продовжити чи скасувати завантаження wp?</value>
+  </data>
+  <data name="ZeroAltWarningTitle" xml:space="preserve">
+    <value>Попередження про нульову висоту</value>
+  </data>
 </root>
