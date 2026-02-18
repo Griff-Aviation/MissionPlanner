@@ -655,6 +655,8 @@ namespace MissionPlanner
             // load config
             LoadConfig();
 
+            speech_armed_only = Settings.Instance.GetBoolean("speech_armed_only", false);
+
             // force language to be loaded
             L10N.GetConfigLang();
 
@@ -1720,7 +1722,7 @@ namespace MissionPlanner
                     Settings.Instance[_connectionControl.CMB_serialport.Text.Replace(" ","_") + "_BAUD"] =
                         _connectionControl.CMB_baudrate.Text;
 
-                    this.Text = titlebar + " " + comPort.MAV.VersionString;
+                    this.Text = titlebar + " " + comPort.MAV.VersionString + " on " + comPort.MAV.SerialString;
 
                     // refresh config window if needed
                     if (MyView.current != null && showui)
@@ -3596,12 +3598,17 @@ namespace MissionPlanner
             try
             {
                 // prescan
-                MissionPlanner.Comms.CommsBLE.SerialPort_GetCustomPorts();
+                if (Environment.OSVersion.Platform == PlatformID.Win32NT)
+                    MissionPlanner.Comms.CommsBLE.SerialPort_GetCustomPorts();
+
+                MissionPlanner.Comms.CommsWinUSB.SerialPort_GetCustomPorts();
             }
             catch { }
 
             // add the custom port creator
             CustomPortList.Add(new Regex("BLE_.*"), (s1, s2) => { return new CommsBLE() { PortName = s1, BaudRate = int.Parse(s2) }; });
+
+            CustomPortList.Add(new Regex("WINUSB_VID_.*"), (s1, s2) => { return new CommsWinUSB() { PortName = s1, BaudRate = int.Parse(s2) }; });
 
             this.ResumeLayout();
 
