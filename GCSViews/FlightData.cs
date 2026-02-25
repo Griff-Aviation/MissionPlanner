@@ -14,6 +14,7 @@ using MissionPlanner.Maps;
 using MissionPlanner.Utilities;
 using MissionPlanner.Warnings;
 using System;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Drawing;
@@ -160,6 +161,10 @@ namespace MissionPlanner.GCSViews
 
         public readonly List<TabPage> TabListOriginal = new List<TabPage>();
         public Dictionary<string,bool> TabListDisplay = new Dictionary<string, bool>();
+        private readonly TabPage tabMavlinkDashboard = new TabPage();
+        private readonly MavlinkDashboardView mavlinkDashboardView = new MavlinkDashboardView();
+        private readonly ToolStripMenuItem popOutTabToolStripMenuItem = new ToolStripMenuItem("Pop Out");
+        private TabPage tabContextMenuTarget;
 
         //List for setting colors of quick tab numbers
         List<Color> listQuickView = new List<Color>();
@@ -239,6 +244,12 @@ namespace MissionPlanner.GCSViews
             log.Info("Ctor Start");
 
             InitializeComponent();
+            InitializeMavlinkDashboardTab();
+            popOutTabToolStripMenuItem.Name = "popOutTabToolStripMenuItem";
+            popOutTabToolStripMenuItem.Click += popOutTabToolStripMenuItem_Click;
+            contextMenuStripactionstab.Items.Insert(0, popOutTabToolStripMenuItem);
+            contextMenuStripactionstab.Opening += contextMenuStripactionstab_Opening;
+            mavlinkDashboardView.PopOutRequested += MavlinkDashboardView_PopOutRequested;
 
             log.Info("Components Done");
 
@@ -422,6 +433,22 @@ namespace MissionPlanner.GCSViews
 
             tabControlactions.Multiline = Settings.Instance.GetBoolean("tabControlactions_Multiline", false);
 
+        }
+
+        private void InitializeMavlinkDashboardTab()
+        {
+            tabMavlinkDashboard.Name = "tabMavlinkDashboard";
+            tabMavlinkDashboard.Text = "MAVLink Dashboard";
+            tabMavlinkDashboard.UseVisualStyleBackColor = true;
+
+            mavlinkDashboardView.Name = "mavlinkDashboardView";
+            mavlinkDashboardView.Dock = DockStyle.Fill;
+
+            tabMavlinkDashboard.Controls.Add(mavlinkDashboardView);
+
+            var quickTabIndex = tabControlactions.TabPages.IndexOf(tabQuick);
+            var insertIndex = quickTabIndex >= 0 ? quickTabIndex + 1 : 0;
+            tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
         }
 
         public void Activate()
@@ -2588,6 +2615,51 @@ namespace MissionPlanner.GCSViews
             for (int z = 1; z <= max; z++)
             {
                 CMB_setwp.Items.Add(z.ToString());
+            }
+        }
+
+        private void MavlinkDashboardView_PopOutRequested(object sender, EventArgs e)
+        {
+            UndockMavlinkDashboardTab();
+        }
+
+        private void contextMenuStripactionstab_Opening(object sender, CancelEventArgs e)
+        {
+            tabContextMenuTarget = GetTabAtPosition(tabControlactions.PointToClient(Cursor.Position));
+            popOutTabToolStripMenuItem.Visible = tabContextMenuTarget == tabQuick || tabContextMenuTarget == tabMavlinkDashboard;
+
+            if (tabContextMenuTarget != null)
+            {
+                tabControlactions.SelectedTab = tabContextMenuTarget;
+            }
+        }
+
+        private TabPage GetTabAtPosition(Point position)
+        {
+            for (int i = 0; i < tabControlactions.TabPages.Count; i++)
+            {
+                if (tabControlactions.GetTabRect(i).Contains(position))
+                {
+                    return tabControlactions.TabPages[i];
+                }
+            }
+
+            return null;
+        }
+
+        private void popOutTabToolStripMenuItem_Click(object sender, EventArgs e)
+        {
+            var targetTab = tabContextMenuTarget ?? tabControlactions.SelectedTab;
+
+            if (targetTab == tabQuick)
+            {
+                undockDockToolStripMenuItem_Click(undockToolStripMenuItem, EventArgs.Empty);
+                return;
+            }
+
+            if (targetTab == tabMavlinkDashboard)
+            {
+                UndockMavlinkDashboardTab();
             }
         }
 
@@ -6135,10 +6207,15 @@ namespace MissionPlanner.GCSViews
             hud1.batterycellcount = iCellCount;
         }
         private bool tabQuickDetached = false;
+        private bool tabMavlinkDashboardDetached = false;
         private bool tuningwasrightclick;
 
         private void undockDockToolStripMenuItem_Click(object sender, EventArgs e)
         {
+            if (tabQuickDetached)
+            {
+                return;
+            }
 
             Form dropout = new Form();
             TabControl tab = new TabControl();
@@ -6163,7 +6240,11 @@ namespace MissionPlanner.GCSViews
             dropout.RestoreStartupLocation();
             dropout.Show();
             tabQuickDetached = true;
-            (sender as ToolStripMenuItem).Visible = false;
+            var menu = sender as ToolStripMenuItem;
+            if (menu != null)
+            {
+                menu.Visible = false;
+            }
         }
 
         void dropoutQuick_FormClosed(object sender, FormClosedEventArgs e)
@@ -6173,6 +6254,45 @@ namespace MissionPlanner.GCSViews
             tabControlactions.SelectedTab = tabQuick;
             tabQuickDetached = false;
             contextMenuStripQuickView.Items["undockToolStripMenuItem"].Visible = true;
+        }
+
+        private void UndockMavlinkDashboardTab()
+        {
+            if (tabMavlinkDashboardDetached)
+            {
+                return;
+            }
+
+            Form dropout = new Form();
+            TabControl tab = new TabControl();
+            dropout.FormBorderStyle = FormBorderStyle.Sizable;
+            dropout.ShowInTaskbar = false;
+            dropout.Size = new Size(300, 450);
+            tabMavlinkDashboardDetached = true;
+            tab.Appearance = TabAppearance.FlatButtons;
+            tab.ItemSize = new Size(0, 0);
+            tab.SizeMode = TabSizeMode.Fixed;
+            tab.Size = new Size(dropout.ClientSize.Width, dropout.ClientSize.Height + 22);
+            tab.Location = new Point(0, -22);
+
+            tab.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+
+            dropout.Text = "MAVLink Dashboard";
+            tabControlactions.Controls.Remove(tabMavlinkDashboard);
+            tab.Controls.Add(tabMavlinkDashboard);
+            tabMavlinkDashboard.BorderStyle = BorderStyle.Fixed3D;
+            dropout.FormClosed += dropoutMavlinkDashboard_FormClosed;
+            dropout.Controls.Add(tab);
+            dropout.RestoreStartupLocation();
+            dropout.Show();
+        }
+
+        void dropoutMavlinkDashboard_FormClosed(object sender, FormClosedEventArgs e)
+        {
+            (sender as Form).SaveStartupLocation();
+            tabControlactions.Controls.Add(tabMavlinkDashboard);
+            tabControlactions.SelectedTab = tabMavlinkDashboard;
+            tabMavlinkDashboardDetached = false;
         }
 
         private void IDENT_btn_Click(object sender, EventArgs e)

@@ -35,8 +35,6 @@ namespace MissionPlanner.GCSViews
             this.multiLineToolStripMenuItem = new System.Windows.Forms.ToolStripMenuItem();
             this.tabControlactions = new System.Windows.Forms.TabControl();
             this.tabQuick = new System.Windows.Forms.TabPage();
-            this.tabMavlinkDashboard = new System.Windows.Forms.TabPage();
-            this.mavlinkDashboardView = new MissionPlanner.GCSViews.MavlinkDashboardView();
             this.tableLayoutPanelQuick = new System.Windows.Forms.TableLayoutPanel();
             this.quickView6 = new MissionPlanner.Controls.QuickView();
             this.contextMenuStripQuickView = new System.Windows.Forms.ContextMenuStrip(this.components);
@@ -594,7 +592,6 @@ namespace MissionPlanner.GCSViews
             // 
             this.tabControlactions.ContextMenuStrip = this.contextMenuStripactionstab;
             this.tabControlactions.Controls.Add(this.tabQuick);
-            this.tabControlactions.Controls.Add(this.tabMavlinkDashboard);
             this.tabControlactions.Controls.Add(this.tabActions);
             this.tabControlactions.Controls.Add(this.tabPagemessages);
             this.tabControlactions.Controls.Add(this.tabActionsSimple);
@@ -621,20 +618,6 @@ namespace MissionPlanner.GCSViews
             this.tabQuick.Name = "tabQuick";
             this.tabQuick.UseVisualStyleBackColor = true;
             this.tabQuick.Resize += new System.EventHandler(this.tabQuick_Resize);
-            // 
-            // tabMavlinkDashboard
-            // 
-            this.tabMavlinkDashboard.Controls.Add(this.mavlinkDashboardView);
-            this.tabMavlinkDashboard.Name = "tabMavlinkDashboard";
-            resources.ApplyResources(this.tabMavlinkDashboard, "tabMavlinkDashboard");
-            this.tabMavlinkDashboard.Text = "MAVLink Dashboard";
-            this.tabMavlinkDashboard.UseVisualStyleBackColor = true;
-            // 
-            // mavlinkDashboardView
-            // 
-            this.mavlinkDashboardView.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.mavlinkDashboardView.Name = "mavlinkDashboardView";
-            resources.ApplyResources(this.mavlinkDashboardView, "mavlinkDashboardView");
             // 
             // tableLayoutPanelQuick
             // 
@@ -3046,12 +3029,10 @@ namespace MissionPlanner.GCSViews
         private Label lbl_playbackspeed;
         private System.Windows.Forms.ToolStripMenuItem setAspectRatioToolStripMenuItem;
         public System.Windows.Forms.TabPage tabQuick;
-        public System.Windows.Forms.TabPage tabMavlinkDashboard;
         private Controls.QuickView quickView3;
         private Controls.QuickView quickView2;
         private Controls.QuickView quickView1;
         private Controls.QuickView quickView4;
-        private MavlinkDashboardView mavlinkDashboardView;
         private System.Windows.Forms.ToolStripMenuItem flyToHereAltToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem flightPlannerToolStripMenuItem;
         private System.Windows.Forms.ToolStripMenuItem userItemsToolStripMenuItem;
