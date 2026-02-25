@@ -797,6 +797,13 @@ namespace MissionPlanner.GCSViews
                 tabControlactions.SelectedIndex = 0;
             }
 
+            if (!tabMavlinkDashboardDetached && !tabControlactions.TabPages.Contains(tabMavlinkDashboard))
+            {
+                var quickIndex = tabControlactions.TabPages.IndexOf(tabQuick);
+                var insertIndex = quickIndex >= 0 ? quickIndex + 1 : 0;
+                tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
+            }
+
             ThemeManager.ApplyThemeTo(tabControlactions);
         }
 

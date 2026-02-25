@@ -16,14 +16,18 @@ namespace MissionPlanner.GCSViews
 
         private void InitializeComponent()
         {
+            this.components = new System.ComponentModel.Container();
             this.panelTop = new System.Windows.Forms.Panel();
             this.buttonPopOut = new System.Windows.Forms.Button();
+            this.labelUiTick = new System.Windows.Forms.Label();
             this.labelPlaceholder = new System.Windows.Forms.Label();
+            this.uiTickTimer = new System.Windows.Forms.Timer(this.components);
             this.panelTop.SuspendLayout();
             this.SuspendLayout();
             // 
             // panelTop
             // 
+            this.panelTop.Controls.Add(this.labelUiTick);
             this.panelTop.Controls.Add(this.buttonPopOut);
             this.panelTop.Dock = System.Windows.Forms.DockStyle.Top;
             this.panelTop.Location = new System.Drawing.Point(0, 0);
@@ -42,6 +46,15 @@ namespace MissionPlanner.GCSViews
             this.buttonPopOut.UseVisualStyleBackColor = true;
             this.buttonPopOut.Click += new System.EventHandler(this.buttonPopOut_Click);
             // 
+            // labelUiTick
+            // 
+            this.labelUiTick.AutoSize = true;
+            this.labelUiTick.Location = new System.Drawing.Point(6, 11);
+            this.labelUiTick.Name = "labelUiTick";
+            this.labelUiTick.Size = new System.Drawing.Size(52, 13);
+            this.labelUiTick.TabIndex = 1;
+            this.labelUiTick.Text = "UI tick: 0";
+            // 
             // labelPlaceholder
             // 
             this.labelPlaceholder.Dock = System.Windows.Forms.DockStyle.Fill;
@@ -51,6 +64,12 @@ namespace MissionPlanner.GCSViews
             this.labelPlaceholder.TabIndex = 1;
             this.labelPlaceholder.Text = "MAVLink Dashboard (WIP)";
             this.labelPlaceholder.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            // 
+            // uiTickTimer
+            // 
+            this.uiTickTimer.Enabled = true;
+            this.uiTickTimer.Interval = 150;
+            this.uiTickTimer.Tick += new System.EventHandler(this.uiTickTimer_Tick);
             // 
             // MavlinkDashboardView
             // 
@@ -63,6 +82,8 @@ namespace MissionPlanner.GCSViews
 
         private System.Windows.Forms.Panel panelTop;
         private System.Windows.Forms.Button buttonPopOut;
+        private System.Windows.Forms.Label labelUiTick;
         private System.Windows.Forms.Label labelPlaceholder;
+        private System.Windows.Forms.Timer uiTickTimer;
     }
 }
