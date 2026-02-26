@@ -20,7 +20,7 @@ namespace MissionPlanner.GCSViews
             this.panelTop = new System.Windows.Forms.Panel();
             this.buttonPopOut = new System.Windows.Forms.Button();
             this.labelUiTick = new System.Windows.Forms.Label();
-            this.labelPlaceholder = new System.Windows.Forms.Label();
+            this.flowLayoutPanelTiles = new System.Windows.Forms.FlowLayoutPanel();
             this.uiTickTimer = new System.Windows.Forms.Timer(this.components);
             this.panelTop.SuspendLayout();
             this.SuspendLayout();
@@ -55,15 +55,17 @@ namespace MissionPlanner.GCSViews
             this.labelUiTick.TabIndex = 1;
             this.labelUiTick.Text = "UI tick: 0";
             // 
-            // labelPlaceholder
+            // flowLayoutPanelTiles
             // 
-            this.labelPlaceholder.Dock = System.Windows.Forms.DockStyle.Fill;
-            this.labelPlaceholder.Location = new System.Drawing.Point(0, 35);
-            this.labelPlaceholder.Name = "labelPlaceholder";
-            this.labelPlaceholder.Size = new System.Drawing.Size(150, 115);
-            this.labelPlaceholder.TabIndex = 1;
-            this.labelPlaceholder.Text = "MAVLink Dashboard (WIP)";
-            this.labelPlaceholder.TextAlign = System.Drawing.ContentAlignment.MiddleCenter;
+            this.flowLayoutPanelTiles.AutoScroll = true;
+            this.flowLayoutPanelTiles.Dock = System.Windows.Forms.DockStyle.Fill;
+            this.flowLayoutPanelTiles.FlowDirection = System.Windows.Forms.FlowDirection.LeftToRight;
+            this.flowLayoutPanelTiles.Location = new System.Drawing.Point(0, 35);
+            this.flowLayoutPanelTiles.Name = "flowLayoutPanelTiles";
+            this.flowLayoutPanelTiles.Padding = new System.Windows.Forms.Padding(6);
+            this.flowLayoutPanelTiles.Size = new System.Drawing.Size(150, 115);
+            this.flowLayoutPanelTiles.TabIndex = 1;
+            this.flowLayoutPanelTiles.WrapContents = true;
             // 
             // uiTickTimer
             // 
@@ -73,7 +75,7 @@ namespace MissionPlanner.GCSViews
             // 
             // MavlinkDashboardView
             // 
-            this.Controls.Add(this.labelPlaceholder);
+            this.Controls.Add(this.flowLayoutPanelTiles);
             this.Controls.Add(this.panelTop);
             this.Name = "MavlinkDashboardView";
             this.panelTop.ResumeLayout(false);
@@ -83,7 +85,7 @@ namespace MissionPlanner.GCSViews
         private System.Windows.Forms.Panel panelTop;
         private System.Windows.Forms.Button buttonPopOut;
         private System.Windows.Forms.Label labelUiTick;
-        private System.Windows.Forms.Label labelPlaceholder;
+        private System.Windows.Forms.FlowLayoutPanel flowLayoutPanelTiles;
         private System.Windows.Forms.Timer uiTickTimer;
     }
 }

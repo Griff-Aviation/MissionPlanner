@@ -6234,7 +6234,7 @@ namespace MissionPlanner.GCSViews
             TabControl tab = new TabControl();
             dropout.FormBorderStyle = FormBorderStyle.Sizable;
             dropout.ShowInTaskbar = false;
-            dropout.Size = new Size(300, 450);
+            dropout.Size = new Size(600, 450);
             tabQuickDetached = true;
             tab.Appearance = TabAppearance.FlatButtons;
             tab.ItemSize = new Size(0, 0);
