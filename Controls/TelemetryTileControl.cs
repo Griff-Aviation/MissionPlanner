@@ -1,23 +1,33 @@
 using System.Drawing;
 using System.Windows.Forms;
 using MissionPlanner.MavlinkDashboard;
+using MissionPlanner.Utilities;
 
 namespace MissionPlanner.Controls
 {
     public class TelemetryTileControl : UserControl
     {
+        public static Color NormalColor { get; set; } = Color.FromArgb(108, 181, 80);
+        public static Color WarningColor { get; set; } = Color.FromArgb(214, 184, 65);
+        public static Color CriticalColor { get; set; } = Color.FromArgb(198, 88, 88);
+        public static Color InactiveColor { get; set; } = Color.FromArgb(132, 132, 132);
+        public static Color SelectedColor { get; set; } = Color.FromArgb(92, 149, 255);
+
         private readonly Label labelName = new Label();
         private readonly Label labelValue = new Label();
         private readonly TableLayoutPanel layout = new TableLayoutPanel();
         private Color stateBorderColor = SystemColors.ActiveBorder;
+        private FieldState telemetryState = FieldState.Normal;
+        private bool isSelected;
 
         public TelemetryTileControl()
         {
-            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint, true);
+            SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.Selectable, true);
             Size = new Size(170, 90);
             Margin = new Padding(6);
             Padding = new Padding(8);
-            BackColor = SystemColors.ControlLightLight;
+            TabStop = true;
+            BackColor = ThemeManager.ControlBGColor;
 
             layout.ColumnCount = 1;
             layout.RowCount = 2;
@@ -34,9 +44,14 @@ namespace MissionPlanner.Controls
             labelValue.TextAlign = ContentAlignment.MiddleLeft;
             labelValue.Font = new Font(Font.FontFamily, 18F, FontStyle.Bold, GraphicsUnit.Point);
 
+            layout.MouseDown += Tile_MouseDown;
+            labelName.MouseDown += Tile_MouseDown;
+            labelValue.MouseDown += Tile_MouseDown;
+
             layout.Controls.Add(labelName, 0, 0);
             layout.Controls.Add(labelValue, 0, 1);
             Controls.Add(layout);
+            ApplyStateVisual();
         }
 
         public void SetFieldValue(FieldValue fieldValue)
@@ -45,7 +60,8 @@ namespace MissionPlanner.Controls
             {
                 labelName.Text = string.Empty;
                 labelValue.Text = "-";
-                SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
+                telemetryState = FieldState.Inactive;
+                ApplyStateVisual();
                 return;
             }
 
@@ -53,25 +69,8 @@ namespace MissionPlanner.Controls
             labelValue.Text = string.IsNullOrEmpty(fieldValue.Units)
                 ? (fieldValue.FormattedValue ?? string.Empty)
                 : (fieldValue.FormattedValue ?? string.Empty) + " " + fieldValue.Units;
-
-            switch (fieldValue.State)
-            {
-                case FieldState.Warning:
-                    SetStateVisual(Color.FromArgb(70, 70, 20), Color.Goldenrod);
-                    break;
-                case FieldState.Critical:
-                    SetStateVisual(Color.FromArgb(70, 30, 30), Color.IndianRed);
-                    break;
-                case FieldState.Inactive:
-                    SetStateVisual(SystemColors.ControlDarkDark, SystemColors.GrayText);
-                    break;
-                case FieldState.Selected:
-                    SetStateVisual(Color.FromArgb(35, 50, 80), Color.CornflowerBlue);
-                    break;
-                default:
-                    SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
-                    break;
-            }
+            telemetryState = fieldValue.State == FieldState.Selected ? FieldState.Normal : fieldValue.State;
+            ApplyStateVisual();
         }
 
         public Color StateBorderColor
@@ -88,6 +87,89 @@ namespace MissionPlanner.Controls
         {
             BackColor = backgroundColor;
             StateBorderColor = borderColor;
+        }
+
+        protected override void OnEnter(System.EventArgs e)
+        {
+            base.OnEnter(e);
+            isSelected = true;
+            ApplyStateVisual();
+        }
+
+        protected override void OnLeave(System.EventArgs e)
+        {
+            base.OnLeave(e);
+            isSelected = false;
+            ApplyStateVisual();
+        }
+
+        private void ApplyStateVisual()
+        {
+            labelName.ForeColor = ThemeManager.TextColor;
+            labelValue.ForeColor = ThemeManager.TextColor;
+
+            var stateForVisual = isSelected ? FieldState.Selected : telemetryState;
+            var semanticColor = GetSemanticColor(stateForVisual);
+            var backgroundColor = Blend(ThemeManager.ControlBGColor, semanticColor, GetTintWeight(stateForVisual));
+            SetStateVisual(backgroundColor, semanticColor);
+        }
+
+        private static int GetTintWeight(FieldState state)
+        {
+            switch (state)
+            {
+                case FieldState.Warning:
+                    return 0;
+                case FieldState.Critical:
+                    return 30;
+                case FieldState.Inactive:
+                    return 18;
+                case FieldState.Selected:
+                    return 28;
+                default:
+                    return 20;
+            }
+        }
+
+        private static Color GetSemanticColor(FieldState state)
+        {
+            switch (state)
+            {
+                case FieldState.Warning:
+                    return WarningColor;
+                case FieldState.Critical:
+                    return CriticalColor;
+                case FieldState.Inactive:
+                    return InactiveColor;
+                case FieldState.Selected:
+                    return SelectedColor;
+                default:
+                    return NormalColor;
+            }
+        }
+
+        private static Color Blend(Color baseColor, Color tintColor, int tintPercent)
+        {
+            if (tintPercent <= 0)
+            {
+                return baseColor;
+            }
+
+            if (tintPercent >= 100)
+            {
+                return tintColor;
+            }
+
+            var inv = 100 - tintPercent;
+            return Color.FromArgb(
+                (baseColor.R * inv + tintColor.R * tintPercent) / 100,
+                (baseColor.G * inv + tintColor.G * tintPercent) / 100,
+                (baseColor.B * inv + tintColor.B * tintPercent) / 100);
+        }
+
+        private void Tile_MouseDown(object sender, MouseEventArgs e)
+        {
+            Focus();
         }
 
         protected override void OnPaint(PaintEventArgs e)

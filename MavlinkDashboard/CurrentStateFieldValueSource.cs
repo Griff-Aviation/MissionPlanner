@@ -85,7 +85,6 @@ namespace MissionPlanner.MavlinkDashboard
             {
                 state = FieldState.Warning;
             }
-
             value = new FieldValue
             {
                 Label = label,
