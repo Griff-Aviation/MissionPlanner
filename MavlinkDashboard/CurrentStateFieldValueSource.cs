@@ -1,9 +1,15 @@
 using System;
+using System.Collections.Generic;
 
 namespace MissionPlanner.MavlinkDashboard
 {
     public class CurrentStateFieldValueSource : IFieldValueSource
     {
+        private static readonly TimeSpan SoftStaleThreshold = TimeSpan.FromSeconds(2);
+        private static readonly TimeSpan InactiveThreshold = TimeSpan.FromSeconds(5);
+        private readonly object sync = new object();
+        private readonly Dictionary<string, FieldTracker> fieldTrackers = new Dictionary<string, FieldTracker>(StringComparer.OrdinalIgnoreCase);
+
         public bool TryGetValue(FieldKey key, out FieldValue value)
         {
             value = null;
@@ -14,62 +20,148 @@ namespace MissionPlanner.MavlinkDashboard
             }
 
             var currentState = MainV2.comPort?.MAV?.cs;
-            if (currentState == null || !IsConnected(currentState))
+            if (currentState == null)
             {
                 value = CreateInactiveValue(key.Field);
                 return true;
             }
 
-            switch (key.Field.ToUpperInvariant())
+            if (!TryReadField(currentState, key.Field, out var label, out var formattedValue, out var units))
+            {
+                return false;
+            }
+
+            var sampleTimestampUtc = GetCurrentStateTimestampUtc(currentState);
+            if (!sampleTimestampUtc.HasValue)
+            {
+                value = CreateInactiveValue(key.Field);
+                return true;
+            }
+
+            var trackerKey = GetTrackerKey(key);
+            var valueToken = formattedValue + "|" + units;
+            DateTime lastUpdateUtc;
+
+            lock (sync)
+            {
+                if (!fieldTrackers.TryGetValue(trackerKey, out var tracker))
+                {
+                    tracker = new FieldTracker
+                    {
+                        LastValueToken = valueToken,
+                        LastSampleTimestampUtc = sampleTimestampUtc.Value,
+                        LastUpdateTimestampUtc = sampleTimestampUtc.Value
+                    };
+                    fieldTrackers[trackerKey] = tracker;
+                }
+                else
+                {
+                    var sampleAdvanced = sampleTimestampUtc.Value > tracker.LastSampleTimestampUtc;
+                    var valueChanged = !string.Equals(tracker.LastValueToken, valueToken, StringComparison.Ordinal);
+
+                    if (sampleAdvanced)
+                    {
+                        tracker.LastSampleTimestampUtc = sampleTimestampUtc.Value;
+                    }
+
+                    if (sampleAdvanced || valueChanged)
+                    {
+                        tracker.LastValueToken = valueToken;
+                        tracker.LastUpdateTimestampUtc = sampleTimestampUtc.Value;
+                    }
+                }
+
+                lastUpdateUtc = tracker.LastUpdateTimestampUtc;
+            }
+
+            var age = DateTime.UtcNow - lastUpdateUtc;
+            var state = FieldState.Normal;
+
+            if (age >= InactiveThreshold)
+            {
+                state = FieldState.Inactive;
+            }
+            else if (age >= SoftStaleThreshold)
+            {
+                state = FieldState.Warning;
+            }
+
+            value = new FieldValue
+            {
+                Label = label,
+                FormattedValue = formattedValue,
+                Units = units,
+                TimestampUtc = lastUpdateUtc,
+                State = state
+            };
+
+            return true;
+        }
+
+        private static bool TryReadField(CurrentState currentState, string field, out string label, out string formattedValue, out string units)
+        {
+            label = GetLabel(field);
+            formattedValue = "-";
+            units = string.Empty;
+
+            switch (field.ToUpperInvariant())
             {
                 case "ARMED":
-                    value = CreateValue("Armed", currentState.armed ? "Armed" : "Disarmed", string.Empty);
+                    formattedValue = currentState.armed ? "Armed" : "Disarmed";
                     return true;
                 case "MODE":
-                    value = CreateValue("Mode", string.IsNullOrWhiteSpace(currentState.mode) ? "-" : currentState.mode, string.Empty);
+                    formattedValue = string.IsNullOrWhiteSpace(currentState.mode) ? "-" : currentState.mode;
                     return true;
                 case "ROLL":
-                    value = CreateValue("Roll", currentState.roll.ToString("0.0"), "deg");
+                    formattedValue = currentState.roll.ToString("0.0");
+                    units = "deg";
                     return true;
                 case "PITCH":
-                    value = CreateValue("Pitch", currentState.pitch.ToString("0.0"), "deg");
+                    formattedValue = currentState.pitch.ToString("0.0");
+                    units = "deg";
                     return true;
                 case "YAW":
-                    value = CreateValue("Yaw", currentState.yaw.ToString("0.0"), "deg");
+                    formattedValue = currentState.yaw.ToString("0.0");
+                    units = "deg";
                     return true;
                 case "REL_ALT":
-                    value = CreateValue("Rel Alt", currentState.alt.ToString("0.0"), GetAltUnits());
+                    formattedValue = currentState.alt.ToString("0.0");
+                    units = GetAltUnits();
                     return true;
                 case "GROUND_SPEED":
-                    value = CreateValue("Groundspeed", currentState.groundspeed.ToString("0.0"), GetSpeedUnits());
+                    formattedValue = currentState.groundspeed.ToString("0.0");
+                    units = GetSpeedUnits();
                     return true;
                 default:
                     return false;
             }
         }
 
-        private static bool IsConnected(CurrentState currentState)
+        private static DateTime? GetCurrentStateTimestampUtc(CurrentState currentState)
         {
-            try
+            var timestamp = currentState.datetime;
+            if (timestamp <= DateTime.MinValue.AddSeconds(1))
             {
-                return currentState.connected;
+                return null;
             }
-            catch
+
+            if (timestamp.Kind == DateTimeKind.Utc)
             {
-                return false;
+                return timestamp;
             }
+
+            if (timestamp.Kind == DateTimeKind.Local)
+            {
+                return timestamp.ToUniversalTime();
+            }
+
+            return DateTime.SpecifyKind(timestamp, DateTimeKind.Local).ToUniversalTime();
         }
 
-        private static FieldValue CreateValue(string label, string formattedValue, string units)
+        private static string GetTrackerKey(FieldKey key)
         {
-            return new FieldValue
-            {
-                Label = label,
-                FormattedValue = formattedValue,
-                Units = units,
-                TimestampUtc = DateTime.UtcNow,
-                State = FieldState.Normal
-            };
+            var instance = key.InstanceId.HasValue ? key.InstanceId.Value.ToString() : "default";
+            return (key.Message ?? string.Empty) + ":" + (key.Field ?? string.Empty) + ":" + instance;
         }
 
         private static FieldValue CreateInactiveValue(string field)
@@ -115,6 +207,13 @@ namespace MissionPlanner.MavlinkDashboard
                 default:
                     return field;
             }
+        }
+
+        private sealed class FieldTracker
+        {
+            public string LastValueToken { get; set; }
+            public DateTime LastSampleTimestampUtc { get; set; }
+            public DateTime LastUpdateTimestampUtc { get; set; }
         }
     }
 }
