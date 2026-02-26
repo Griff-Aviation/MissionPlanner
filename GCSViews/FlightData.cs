@@ -250,6 +250,7 @@ namespace MissionPlanner.GCSViews
             contextMenuStripactionstab.Items.Insert(0, popOutTabToolStripMenuItem);
             contextMenuStripactionstab.Opening += contextMenuStripactionstab_Opening;
             mavlinkDashboardView.PopOutRequested += MavlinkDashboardView_PopOutRequested;
+            mavlinkDashboardView.PopInRequested += MavlinkDashboardView_PopInRequested;
 
             log.Info("Components Done");
 
@@ -2628,6 +2629,11 @@ namespace MissionPlanner.GCSViews
         private void MavlinkDashboardView_PopOutRequested(object sender, EventArgs e)
         {
             UndockMavlinkDashboardTab();
+        }
+
+        private void MavlinkDashboardView_PopInRequested(object sender, EventArgs e)
+        {
+            PopInMavlinkDashboardTab();
         }
 
         private void contextMenuStripactionstab_Opening(object sender, CancelEventArgs e)
@@ -6288,18 +6294,36 @@ namespace MissionPlanner.GCSViews
             tabControlactions.Controls.Remove(tabMavlinkDashboard);
             tab.Controls.Add(tabMavlinkDashboard);
             tabMavlinkDashboard.BorderStyle = BorderStyle.Fixed3D;
+            mavlinkDashboardView.SetPoppedOutState(true);
             dropout.FormClosed += dropoutMavlinkDashboard_FormClosed;
             dropout.Controls.Add(tab);
             dropout.RestoreStartupLocation();
             dropout.Show();
         }
 
+        private void PopInMavlinkDashboardTab()
+        {
+            if (!tabMavlinkDashboardDetached)
+            {
+                return;
+            }
+
+            var detachedWindow = tabMavlinkDashboard.FindForm();
+            if (detachedWindow != null)
+            {
+                detachedWindow.Close();
+            }
+        }
+
         void dropoutMavlinkDashboard_FormClosed(object sender, FormClosedEventArgs e)
         {
             (sender as Form).SaveStartupLocation();
-            tabControlactions.Controls.Add(tabMavlinkDashboard);
+            var quickIndex = tabControlactions.TabPages.IndexOf(tabQuick);
+            var insertIndex = quickIndex >= 0 ? quickIndex + 1 : 0;
+            tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
             tabControlactions.SelectedTab = tabMavlinkDashboard;
             tabMavlinkDashboardDetached = false;
+            mavlinkDashboardView.SetPoppedOutState(false);
         }
 
         private void IDENT_btn_Click(object sender, EventArgs e)
