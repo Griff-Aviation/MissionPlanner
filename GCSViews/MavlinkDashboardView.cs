@@ -1,6 +1,6 @@
 using MissionPlanner.Controls;
+using MissionPlanner.MavlinkDashboard;
 using System;
-using System.Drawing;
 using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews
@@ -9,15 +9,18 @@ namespace MissionPlanner.GCSViews
     {
         public event EventHandler PopOutRequested;
         public event EventHandler PopInRequested;
-        private int uiTickCount;
         private bool isPoppedOut;
+        private readonly IFieldValueSource fieldValueSource = new SyntheticFieldValueSource();
+        private readonly FieldKey modeFieldKey = new FieldKey {Message = "SYNTHETIC", Field = "VALUE"};
+        private readonly TelemetryTileControl modeTile = new TelemetryTileControl {Name = "modeTile"};
 
         public MavlinkDashboardView()
         {
             InitializeComponent();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             SetPoppedOutState(false);
-            InitializeDefaultTiles();
+            flowLayoutPanelTiles.Controls.Add(modeTile);
+            RefreshTiles();
         }
 
         private void buttonPopOut_Click(object sender, EventArgs e)
@@ -34,8 +37,7 @@ namespace MissionPlanner.GCSViews
 
         private void uiTickTimer_Tick(object sender, EventArgs e)
         {
-            uiTickCount++;
-            labelUiTick.Text = "UI tick: " + uiTickCount;
+            RefreshTiles();
         }
 
         public void SetPoppedOutState(bool poppedOut)
@@ -44,28 +46,12 @@ namespace MissionPlanner.GCSViews
             buttonPopOut.Text = poppedOut ? "Pop In" : "Pop Out";
         }
 
-        private void InitializeDefaultTiles()
+        private void RefreshTiles()
         {
-            var modeTile = new TelemetryTileControl
+            if (fieldValueSource.TryGetValue(modeFieldKey, out var value))
             {
-                Name = "modeTile",
-                TileLabel = "Mode",
-                TileValue = "-"
-            };
-
-            modeTile.SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
-            flowLayoutPanelTiles.Controls.Add(modeTile);
-
-            var armTile = new TelemetryTileControl
-            {
-                Name = "armTile",
-                TileLabel = "Arm/Disarm",
-                TileValue = "Armed"
-            };
-
-            armTile.SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
-            flowLayoutPanelTiles.Controls.Add(armTile);
-
+                modeTile.SetFieldValue(value);
+            }
         }
     }
 }

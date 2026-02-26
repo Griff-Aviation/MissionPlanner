@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+using MissionPlanner.MavlinkDashboard;
 
 namespace MissionPlanner.Controls
 {
@@ -38,16 +39,39 @@ namespace MissionPlanner.Controls
             Controls.Add(layout);
         }
 
-        public string TileLabel
+        public void SetFieldValue(FieldValue fieldValue)
         {
-            get => labelName.Text;
-            set => labelName.Text = value ?? string.Empty;
-        }
+            if (fieldValue == null)
+            {
+                labelName.Text = string.Empty;
+                labelValue.Text = "-";
+                SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
+                return;
+            }
 
-        public string TileValue
-        {
-            get => labelValue.Text;
-            set => labelValue.Text = value ?? string.Empty;
+            labelName.Text = fieldValue.Label ?? string.Empty;
+            labelValue.Text = string.IsNullOrEmpty(fieldValue.Units)
+                ? (fieldValue.FormattedValue ?? string.Empty)
+                : (fieldValue.FormattedValue ?? string.Empty) + " " + fieldValue.Units;
+
+            switch (fieldValue.State)
+            {
+                case FieldState.Warning:
+                    SetStateVisual(Color.FromArgb(70, 70, 20), Color.Goldenrod);
+                    break;
+                case FieldState.Critical:
+                    SetStateVisual(Color.FromArgb(70, 30, 30), Color.IndianRed);
+                    break;
+                case FieldState.Inactive:
+                    SetStateVisual(SystemColors.ControlDarkDark, SystemColors.GrayText);
+                    break;
+                case FieldState.Selected:
+                    SetStateVisual(Color.FromArgb(35, 50, 80), Color.CornflowerBlue);
+                    break;
+                default:
+                    SetStateVisual(SystemColors.ControlDarkDark, SystemColors.ActiveBorder);
+                    break;
+            }
         }
 
         public Color StateBorderColor
