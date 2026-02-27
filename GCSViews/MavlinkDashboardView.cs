@@ -716,7 +716,10 @@ namespace MissionPlanner.GCSViews
         private sealed class ExplorerWindowForm : Form
         {
             private readonly TreeView treeView = new TreeView();
-            private readonly SortedDictionary<uint, TreeNode> messageNodes = new SortedDictionary<uint, TreeNode>();
+            private readonly TextBox searchTextBox = new TextBox();
+            private readonly CheckBox showAllMessagesCheckBox = new CheckBox();
+            private readonly List<uint> allDialectMessageIds = new List<uint>();
+            private readonly HashSet<uint> currentlyReceivedMessageIds = new HashSet<uint>();
 
             public ExplorerWindowForm()
             {
@@ -742,20 +745,16 @@ namespace MissionPlanner.GCSViews
                     TextAlign = ContentAlignment.BottomLeft
                 };
 
-                var searchTextBox = new TextBox
-                {
-                    Name = "explorerSearchTextBox",
-                    Dock = DockStyle.Top,
-                    Height = 22
-                };
+                searchTextBox.Name = "explorerSearchTextBox";
+                searchTextBox.Dock = DockStyle.Top;
+                searchTextBox.Height = 22;
+                searchTextBox.TextChanged += searchTextBox_TextChanged;
 
-                var showAllMessagesCheckBox = new CheckBox
-                {
-                    Name = "showAllMessagesCheckBox",
-                    Text = "Show All Messages",
-                    Dock = DockStyle.Top,
-                    Height = 22
-                };
+                showAllMessagesCheckBox.Name = "showAllMessagesCheckBox";
+                showAllMessagesCheckBox.Text = "Show All Messages";
+                showAllMessagesCheckBox.Dock = DockStyle.Top;
+                showAllMessagesCheckBox.Height = 22;
+                showAllMessagesCheckBox.CheckedChanged += showAllMessagesCheckBox_CheckedChanged;
 
                 var headerPanel = new Panel
                 {
@@ -774,6 +773,7 @@ namespace MissionPlanner.GCSViews
                 // Initial status until live MAVLink traffic is observed.
                 treeView.Nodes.Add("Waiting for MAVLink messages...");
 
+                BuildDialectMessageIndex();
                 rootPanel.Controls.Add(treeView);
                 rootPanel.Controls.Add(headerPanel);
                 Controls.Add(rootPanel);
@@ -786,43 +786,153 @@ namespace MissionPlanner.GCSViews
                     return;
                 }
 
-                var addedAny = false;
+                // Snapshot current tick's IDs so set comparisons stay deterministic.
+                var nextReceivedMessageIds = new HashSet<uint>(receivedMessageIds);
+                var receivedSetChanged = !nextReceivedMessageIds.SetEquals(currentlyReceivedMessageIds);
+                var addedDialectMessage = false;
 
-                foreach (var messageId in receivedMessageIds)
+                if (receivedSetChanged)
                 {
-                    if (messageNodes.ContainsKey(messageId))
+                    currentlyReceivedMessageIds.Clear();
+                    currentlyReceivedMessageIds.UnionWith(nextReceivedMessageIds);
+                }
+
+                // Include runtime-only IDs if they appear, while retaining sorted display order.
+                foreach (var messageId in nextReceivedMessageIds)
+                {
+                    if (allDialectMessageIds.Contains(messageId))
                     {
                         continue;
                     }
 
-                    var messageName = Enum.IsDefined(typeof(MAVLink.MAVLINK_MSG_ID), (int) messageId)
-                        ? ((MAVLink.MAVLINK_MSG_ID) messageId).ToString()
-                        : "UNKNOWN";
+                    allDialectMessageIds.Add(messageId);
+                    addedDialectMessage = true;
+                }
+
+                if (addedDialectMessage)
+                {
+                    allDialectMessageIds.Sort();
+                }
+
+                // No data/catalog changes: keep current tree and scrollbar position.
+                if (!receivedSetChanged && !addedDialectMessage)
+                {
+                    return;
+                }
+
+                if (showAllMessagesCheckBox.Checked && !addedDialectMessage)
+                {
+                    // In show-all mode, update colors in-place to preserve scroll position and avoid flicker.
+                    UpdateVisibleNodeColors();
+                    return;
+                }
+
+                RebuildMessageTree();
+            }
+
+            private void BuildDialectMessageIndex()
+            {
+                // Seed with known MAVLink enum IDs so show-all can render before traffic arrives.
+                var seen = new HashSet<uint>();
+                foreach (int value in Enum.GetValues(typeof(MAVLink.MAVLINK_MSG_ID)))
+                {
+                    var messageId = (uint) value;
+                    if (seen.Add(messageId))
+                    {
+                        allDialectMessageIds.Add(messageId);
+                    }
+                }
+
+                allDialectMessageIds.Sort();
+            }
+
+            private void showAllMessagesCheckBox_CheckedChanged(object sender, EventArgs e)
+            {
+                RebuildMessageTree();
+            }
+
+            private void searchTextBox_TextChanged(object sender, EventArgs e)
+            {
+                RebuildMessageTree();
+            }
+
+            private void RebuildMessageTree()
+            {
+                // Full rebuild is reserved for structural changes: filters, toggle state, or new IDs.
+                var showAll = showAllMessagesCheckBox.Checked;
+                var query = (searchTextBox.Text ?? string.Empty).Trim();
+                var hasQuery = query.Length > 0;
+                var addedAny = false;
+
+                treeView.BeginUpdate();
+                treeView.Nodes.Clear();
+
+                foreach (var messageId in allDialectMessageIds)
+                {
+                    var isReceived = currentlyReceivedMessageIds.Contains(messageId);
+                    if (!showAll && !isReceived)
+                    {
+                        continue;
+                    }
+
+                    var messageName = ResolveMessageName(messageId);
+                    if (hasQuery && messageName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                    {
+                        continue;
+                    }
 
                     var node = new TreeNode(messageName)
                     {
-                        Name = "msg_" + messageId
+                        Name = "msg_" + messageId,
+                        Tag = messageId
                     };
 
-                    messageNodes[messageId] = node;
+                    if (showAll && !isReceived)
+                    {
+                        // In show-all mode, non-received messages are intentionally greyed out.
+                        node.ForeColor = SystemColors.GrayText;
+                    }
+
+                    treeView.Nodes.Add(node);
                     addedAny = true;
                 }
 
                 if (!addedAny)
                 {
-                    return;
-                }
-
-                treeView.BeginUpdate();
-                treeView.Nodes.Clear();
-
-                // Keep deterministic ordering by MAVLink message ID.
-                foreach (var node in messageNodes.Values)
-                {
-                    treeView.Nodes.Add(node);
+                    treeView.Nodes.Add(showAll || hasQuery
+                        ? "No messages match current filters."
+                        : "Waiting for MAVLink messages...");
                 }
 
                 treeView.EndUpdate();
+            }
+
+            private void UpdateVisibleNodeColors()
+            {
+                if (!showAllMessagesCheckBox.Checked)
+                {
+                    return;
+                }
+
+                // Node.Tag stores the message ID so we can recolor without rebuilding nodes.
+                foreach (TreeNode node in treeView.Nodes)
+                {
+                    if (!(node.Tag is uint messageId))
+                    {
+                        continue;
+                    }
+
+                    node.ForeColor = currentlyReceivedMessageIds.Contains(messageId)
+                        ? treeView.ForeColor
+                        : SystemColors.GrayText;
+                }
+            }
+
+            private static string ResolveMessageName(uint messageId)
+            {
+                return Enum.IsDefined(typeof(MAVLink.MAVLINK_MSG_ID), (int) messageId)
+                    ? ((MAVLink.MAVLINK_MSG_ID) messageId).ToString()
+                    : "UNKNOWN";
             }
         }
 
