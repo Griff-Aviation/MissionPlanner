@@ -1,5 +1,6 @@
 using System.Drawing;
 using System.Windows.Forms;
+
 using MissionPlanner.MavlinkDashboard;
 using MissionPlanner.Utilities;
 
@@ -19,6 +20,7 @@ namespace MissionPlanner.Controls
         private Color stateBorderColor = SystemColors.ActiveBorder;
         private FieldState telemetryState = FieldState.Normal;
         private bool isSelected;
+        private bool isDropTarget;
 
         public TelemetryTileControl()
         {
@@ -87,6 +89,21 @@ namespace MissionPlanner.Controls
         {
             BackColor = backgroundColor;
             StateBorderColor = borderColor;
+        }
+
+        public bool IsDropTarget
+        {
+            get => isDropTarget;
+            set
+            {
+                if (isDropTarget == value)
+                {
+                    return;
+                }
+
+                isDropTarget = value;
+                Invalidate();
+            }
         }
 
         protected override void OnEnter(System.EventArgs e)
@@ -182,6 +199,21 @@ namespace MissionPlanner.Controls
                 border.Width -= 1;
                 border.Height -= 1;
                 e.Graphics.DrawRectangle(pen, border);
+            }
+
+            if (!isDropTarget)
+            {
+                return;
+            }
+
+            // Drag-hover cue: draw a thick outline only, leaving tile fill/state untouched.
+            using (var dropTargetPen = new Pen(Color.Yellow, 3F))
+            {
+                var highlightBorder = ClientRectangle;
+                highlightBorder.Inflate(-2, -2);
+                highlightBorder.Width -= 1;
+                highlightBorder.Height -= 1;
+                e.Graphics.DrawRectangle(dropTargetPen, highlightBorder);
             }
         }
     }

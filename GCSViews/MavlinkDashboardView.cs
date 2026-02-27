@@ -1,6 +1,7 @@
 using MissionPlanner.Controls;
 using MissionPlanner.MavlinkDashboard;
 using System;
+using System.ComponentModel;
 using System.Collections.Generic;
 using System.Drawing;
 using System.Windows.Forms;
@@ -12,15 +13,30 @@ namespace MissionPlanner.GCSViews
         public event EventHandler PopOutRequested;
         public event EventHandler PopInRequested;
         private bool isPoppedOut;
+        private bool editMode;
         private readonly IFieldValueSource fieldValueSource = new CurrentStateFieldValueSource();
+        // Keep config metadata and runtime control together so tile order/state stays in sync.
         private readonly List<(DashboardTileConfig Config, TelemetryTileControl Tile)> tiles = new List<(DashboardTileConfig Config, TelemetryTileControl Tile)>();
         private readonly Button buttonResetDefaults = new Button();
+        private readonly Button buttonEditDashboard = new Button();
+        private readonly ContextMenuStrip tileContextMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
+        // Visual edit-mode cue rendered above all children without affecting layout metrics.
+        private readonly EditModeOverlayControl editModeOverlay = new EditModeOverlayControl();
         private DashboardConfig dashboardConfig;
+        private TelemetryTileControl draggingTile;
+        private Point dragStartPointScreen;
+        private TelemetryTileControl contextMenuTargetTile;
+        private TelemetryTileControl currentDropTargetTile;
 
         public MavlinkDashboardView()
         {
             InitializeComponent();
             InitializeResetButton();
+            InitializeEditButton();
+            InitializeTileContextMenu();
+            InitializeEditModeSupport();
+            InitializeEditModeOverlay();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             SetPoppedOutState(false);
             LoadDashboardConfig();
@@ -42,6 +58,7 @@ namespace MissionPlanner.GCSViews
 
         private void uiTickTimer_Tick(object sender, EventArgs e)
         {
+            // Keep tile values current from the live telemetry source.
             RefreshTiles();
         }
 
@@ -57,6 +74,7 @@ namespace MissionPlanner.GCSViews
             {
                 if (fieldValueSource.TryGetValue(tile.Config.FieldKey, out var value))
                 {
+                    // UI overrides are applied after source formatting.
                     if (!string.IsNullOrWhiteSpace(tile.Config.LabelOverride))
                     {
                         value.Label = tile.Config.LabelOverride;
@@ -74,6 +92,7 @@ namespace MissionPlanner.GCSViews
 
         private void LoadDashboardConfig()
         {
+            // Missing/corrupt file falls back to shipped defaults and is re-saved by the store.
             dashboardConfig = DashboardConfigStore.LoadOrCreateDefault(CreateDefaultConfig);
             ApplyDashboardConfig(dashboardConfig);
         }
@@ -115,6 +134,7 @@ namespace MissionPlanner.GCSViews
 
         private void ApplyDashboardConfig(DashboardConfig config)
         {
+            // Rebuild panel from config order so startup and reset are deterministic.
             flowLayoutPanelTiles.SuspendLayout();
             flowLayoutPanelTiles.Controls.Clear();
             tiles.Clear();
@@ -148,8 +168,10 @@ namespace MissionPlanner.GCSViews
                     Math.Max(50, dashboardConfig.Layout.TileHeight));
             }
 
+            WireTileInteractions(tile);
             tiles.Add((tileConfig, tile));
             flowLayoutPanelTiles.Controls.Add(tile);
+            UpdateTileInteractionState();
         }
 
         private void InitializeResetButton()
@@ -165,12 +187,376 @@ namespace MissionPlanner.GCSViews
             panelTop.Controls.Add(buttonResetDefaults);
         }
 
+        private void InitializeEditButton()
+        {
+            buttonEditDashboard.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonEditDashboard.Location = new Point(66, 6);
+            buttonEditDashboard.Name = "buttonEditDashboard";
+            buttonEditDashboard.Size = new Size(95, 23);
+            buttonEditDashboard.TabIndex = 2;
+            buttonEditDashboard.Text = "Edit Dashboard";
+            buttonEditDashboard.UseVisualStyleBackColor = true;
+            buttonEditDashboard.Click += buttonEditDashboard_Click;
+            panelTop.Controls.Add(buttonEditDashboard);
+        }
+
+        private void InitializeTileContextMenu()
+        {
+            removeTileMenuItem.Name = "removeTileMenuItem";
+            removeTileMenuItem.Click += removeTileMenuItem_Click;
+            tileContextMenu.Items.Add(removeTileMenuItem);
+            tileContextMenu.Opening += tileContextMenu_Opening;
+        }
+
+        private void InitializeEditModeSupport()
+        {
+            // Reordering works through the panel-level drag/drop surface.
+            flowLayoutPanelTiles.AllowDrop = true;
+            flowLayoutPanelTiles.DragEnter += flowLayoutPanelTiles_DragEnter;
+            flowLayoutPanelTiles.DragOver += flowLayoutPanelTiles_DragOver;
+            flowLayoutPanelTiles.DragLeave += flowLayoutPanelTiles_DragLeave;
+            flowLayoutPanelTiles.DragDrop += flowLayoutPanelTiles_DragDrop;
+        }
+
+        private void InitializeEditModeOverlay()
+        {
+            editModeOverlay.Dock = DockStyle.Fill;
+            editModeOverlay.Visible = false;
+            editModeOverlay.TabStop = false;
+            Controls.Add(editModeOverlay);
+            // Must stay on top so the border is not hidden by docked child controls.
+            editModeOverlay.BringToFront();
+        }
+
         private void buttonResetDefaults_Click(object sender, EventArgs e)
         {
             dashboardConfig = CreateDefaultConfig();
             ApplyDashboardConfig(dashboardConfig);
             SaveDashboardConfig();
             RefreshTiles();
+        }
+
+        private void buttonEditDashboard_Click(object sender, EventArgs e)
+        {
+            SetEditMode(!editMode);
+        }
+
+        private void SetEditMode(bool enabled)
+        {
+            if (editMode == enabled)
+            {
+                return;
+            }
+
+            editMode = enabled;
+            buttonEditDashboard.Text = enabled ? "Done Editing" : "Edit Dashboard";
+            UpdateTileInteractionState();
+            // Toggle the top-most border overlay with edit mode.
+            editModeOverlay.Visible = enabled;
+
+            if (enabled)
+            {
+                // Ensure re-ordering/resize repaint does not bury the overlay in z-order.
+                editModeOverlay.BringToFront();
+                editModeOverlay.Invalidate();
+            }
+
+            if (!enabled)
+            {
+                // Persist once when editing session ends.
+                ClearDropTargetHighlight();
+                SaveDashboardConfig();
+            }
+        }
+
+        private void UpdateTileInteractionState()
+        {
+            foreach (var tile in tiles)
+            {
+                tile.Tile.Cursor = editMode ? Cursors.SizeAll : Cursors.Default;
+            }
+        }
+
+        private void WireTileInteractions(TelemetryTileControl tile)
+        {
+            WireTileControl(tile, tile);
+        }
+
+        private void WireTileControl(Control control, TelemetryTileControl ownerTile)
+        {
+            // Attach edit interactions to all child surfaces so dragging works from labels/padding too.
+            control.ContextMenuStrip = tileContextMenu;
+            control.MouseDown += (sender, e) => TileSurface_MouseDown(ownerTile, e);
+            control.MouseMove += (sender, e) => TileSurface_MouseMove(ownerTile, e);
+
+            foreach (Control child in control.Controls)
+            {
+                WireTileControl(child, ownerTile);
+            }
+        }
+
+        private void TileSurface_MouseDown(TelemetryTileControl tile, MouseEventArgs e)
+        {
+            if (!editMode || e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            // Capture drag origin; MouseMove starts actual drag after threshold.
+            draggingTile = tile;
+            dragStartPointScreen = Cursor.Position;
+        }
+
+        private void TileSurface_MouseMove(TelemetryTileControl tile, MouseEventArgs e)
+        {
+            if (!editMode || draggingTile != tile)
+            {
+                return;
+            }
+
+            if ((Control.MouseButtons & MouseButtons.Left) != MouseButtons.Left)
+            {
+                return;
+            }
+
+            if (!HasExceededDragThreshold(dragStartPointScreen, Cursor.Position))
+            {
+                return;
+            }
+
+            // Reset local drag state before invoking WinForms drag loop.
+            draggingTile = null;
+            try
+            {
+                tile.DoDragDrop(tile, DragDropEffects.Move);
+            }
+            finally
+            {
+                ClearDropTargetHighlight();
+            }
+        }
+
+        private static bool HasExceededDragThreshold(Point startScreen, Point currentScreen)
+        {
+            // Use standard system drag threshold to avoid accidental reorders on simple clicks.
+            return Math.Abs(currentScreen.X - startScreen.X) >= SystemInformation.DragSize.Width ||
+                   Math.Abs(currentScreen.Y - startScreen.Y) >= SystemInformation.DragSize.Height;
+        }
+
+        private void flowLayoutPanelTiles_DragEnter(object sender, DragEventArgs e)
+        {
+            e.Effect = editMode && e.Data.GetDataPresent(typeof(TelemetryTileControl))
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+        }
+
+        private void flowLayoutPanelTiles_DragOver(object sender, DragEventArgs e)
+        {
+            // Keep WinForms drop effect updated and drive live hover highlighting while dragging.
+            e.Effect = editMode && e.Data.GetDataPresent(typeof(TelemetryTileControl))
+                ? DragDropEffects.Move
+                : DragDropEffects.None;
+
+            if (e.Effect != DragDropEffects.Move)
+            {
+                ClearDropTargetHighlight();
+                return;
+            }
+
+            var dragged = e.Data.GetData(typeof(TelemetryTileControl)) as TelemetryTileControl;
+            if (dragged == null)
+            {
+                ClearDropTargetHighlight();
+                return;
+            }
+
+            var point = flowLayoutPanelTiles.PointToClient(new Point(e.X, e.Y));
+            UpdateDropTargetHighlight(dragged, point);
+        }
+
+        private void flowLayoutPanelTiles_DragLeave(object sender, EventArgs e)
+        {
+            // Pointer left the drop surface; remove hover target cue.
+            ClearDropTargetHighlight();
+        }
+
+        private void flowLayoutPanelTiles_DragDrop(object sender, DragEventArgs e)
+        {
+            ClearDropTargetHighlight();
+
+            if (!editMode || !e.Data.GetDataPresent(typeof(TelemetryTileControl)))
+            {
+                return;
+            }
+
+            var dragged = e.Data.GetData(typeof(TelemetryTileControl)) as TelemetryTileControl;
+            if (dragged == null)
+            {
+                return;
+            }
+
+            var point = flowLayoutPanelTiles.PointToClient(new Point(e.X, e.Y));
+            var target = GetTileFromControl(flowLayoutPanelTiles.GetChildAtPoint(point));
+            // Drop on tile -> use tile index; drop in gap -> compute insertion slot from gap location.
+            var targetIndex = target == null ? GetGapInsertionIndex(point) : GetTileIndex(target);
+            MoveTile(dragged, targetIndex);
+        }
+
+        private void UpdateDropTargetHighlight(TelemetryTileControl dragged, Point pointerPointInPanel)
+        {
+            // Resolve tile under pointer; we only highlight actual target tiles, not gap space.
+            var target = GetTileFromControl(flowLayoutPanelTiles.GetChildAtPoint(pointerPointInPanel));
+            if (target == null || ReferenceEquals(target, dragged))
+            {
+                ClearDropTargetHighlight();
+                return;
+            }
+
+            if (ReferenceEquals(target, currentDropTargetTile))
+            {
+                // Still over the same tile; no visual/state update needed.
+                return;
+            }
+
+            // Pointer moved to a new tile, so old target highlight must be removed.
+            SetCurrentDropTargetTile(target);
+        }
+
+        private void ClearDropTargetHighlight()
+        {
+            // Ensure only the actively hovered tile is highlighted.
+            SetCurrentDropTargetTile(null);
+        }
+
+        private void SetCurrentDropTargetTile(TelemetryTileControl target)
+        {
+            if (ReferenceEquals(currentDropTargetTile, target))
+            {
+                return;
+            }
+
+            if (currentDropTargetTile != null)
+            {
+                // Reset previous hover target immediately when pointer moves away.
+                currentDropTargetTile.IsDropTarget = false;
+            }
+
+            currentDropTargetTile = target;
+
+            if (currentDropTargetTile != null)
+            {
+                // Only one tile can be marked as active drop target at a time.
+                currentDropTargetTile.IsDropTarget = true;
+            }
+        }
+
+        private int GetGapInsertionIndex(Point point)
+        {
+            // In empty space, insert at the tile that visually comes before the drop gap.
+            for (var i = 0; i < tiles.Count; i++)
+            {
+                var bounds = tiles[i].Tile.Bounds;
+                if (point.Y < bounds.Top)
+                {
+                    return Math.Max(0, i - 1);
+                }
+
+                if (point.Y <= bounds.Bottom && point.X < bounds.Left)
+                {
+                    return Math.Max(0, i - 1);
+                }
+            }
+
+            return Math.Max(0, tiles.Count - 1);
+        }
+
+        private void MoveTile(TelemetryTileControl dragged, int targetIndex)
+        {
+            var sourceIndex = GetTileIndex(dragged);
+            if (sourceIndex < 0 || sourceIndex == targetIndex)
+            {
+                return;
+            }
+
+            // Reorder the config/control tuple list first; panel controls mirror this list afterward.
+            var tile = tiles[sourceIndex];
+            tiles.RemoveAt(sourceIndex);
+
+            targetIndex = Math.Max(0, Math.Min(targetIndex, tiles.Count));
+            tiles.Insert(targetIndex, tile);
+            RefreshTileOrderInPanel();
+        }
+
+        private void RefreshTileOrderInPanel()
+        {
+            flowLayoutPanelTiles.SuspendLayout();
+            flowLayoutPanelTiles.Controls.Clear();
+
+            // Controls order in the panel is derived solely from the tiles list order.
+            foreach (var tile in tiles)
+            {
+                flowLayoutPanelTiles.Controls.Add(tile.Tile);
+            }
+
+            flowLayoutPanelTiles.ResumeLayout();
+        }
+
+        private void tileContextMenu_Opening(object sender, CancelEventArgs e)
+        {
+            if (!editMode)
+            {
+                e.Cancel = true;
+                return;
+            }
+
+            // Resolve the owning tile from whichever inner child was right-clicked.
+            contextMenuTargetTile = GetTileFromControl(tileContextMenu.SourceControl);
+            removeTileMenuItem.Enabled = contextMenuTargetTile != null;
+        }
+
+        private void removeTileMenuItem_Click(object sender, EventArgs e)
+        {
+            if (!editMode || contextMenuTargetTile == null)
+            {
+                return;
+            }
+
+            var index = GetTileIndex(contextMenuTargetTile);
+            if (index < 0)
+            {
+                return;
+            }
+
+            // Dispose removed control immediately; config is persisted when edit mode exits.
+            flowLayoutPanelTiles.Controls.Remove(contextMenuTargetTile);
+            contextMenuTargetTile.Dispose();
+            tiles.RemoveAt(index);
+            contextMenuTargetTile = null;
+            RefreshTiles();
+        }
+
+        private int GetTileIndex(TelemetryTileControl tile)
+        {
+            for (var i = 0; i < tiles.Count; i++)
+            {
+                if (ReferenceEquals(tiles[i].Tile, tile))
+                {
+                    return i;
+                }
+            }
+
+            return -1;
+        }
+
+        private static TelemetryTileControl GetTileFromControl(Control control)
+        {
+            // Walk up from child labels/panels to the root tile control.
+            while (control != null && !(control is TelemetryTileControl))
+            {
+                control = control.Parent;
+            }
+
+            return control as TelemetryTileControl;
         }
 
         private void MavlinkDashboardView_Disposed(object sender, EventArgs e)
@@ -198,6 +584,7 @@ namespace MissionPlanner.GCSViews
 
             foreach (var tile in tiles)
             {
+                // Persist a copy, not live references, to keep runtime objects decoupled from saved state.
                 dashboardConfig.Tiles.Add(new DashboardTileConfig
                 {
                     FieldKey = new FieldKey
@@ -230,6 +617,58 @@ namespace MissionPlanner.GCSViews
             var tileWidth = tiles[0].Tile.Width + tiles[0].Tile.Margin.Horizontal;
             var availableWidth = Math.Max(1, flowLayoutPanelTiles.ClientSize.Width - flowLayoutPanelTiles.Padding.Horizontal);
             return Math.Max(1, availableWidth / Math.Max(1, tileWidth));
+        }
+
+        private sealed class EditModeOverlayControl : Control
+        {
+            protected override CreateParams CreateParams
+            {
+                get
+                {
+                    const int WS_EX_TRANSPARENT = 0x20;
+                    var createParams = base.CreateParams;
+                    // Let underlying controls paint first so only border strokes are visible.
+                    createParams.ExStyle |= WS_EX_TRANSPARENT;
+                    return createParams;
+                }
+            }
+
+            protected override void OnPaintBackground(PaintEventArgs pevent)
+            {
+                // Keep the overlay background clear so only the border is rendered.
+            }
+
+            protected override void OnPaint(PaintEventArgs e)
+            {
+                base.OnPaint(e);
+
+                var borderRect = new Rectangle(1, 1, Math.Max(1, Width - 3), Math.Max(1, Height - 3));
+                if (borderRect.Width <= 0 || borderRect.Height <= 0)
+                {
+                    return;
+                }
+
+                using (var pen = new Pen(Color.Yellow))
+                {
+                    pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
+                    e.Graphics.DrawRectangle(pen, borderRect);
+                }
+            }
+
+            protected override void WndProc(ref Message m)
+            {
+                const int WM_NCHITTEST = 0x84;
+                const int HTTRANSPARENT = -1;
+
+                if (m.Msg == WM_NCHITTEST)
+                {
+                    // Make overlay mouse-transparent so drag/drop and clicks reach tiles/buttons.
+                    m.Result = (IntPtr)HTTRANSPARENT;
+                    return;
+                }
+
+                base.WndProc(ref m);
+            }
         }
     }
 }
