@@ -68,6 +68,7 @@ namespace MissionPlanner.GCSViews
         {
             // Keep tile values current from the live telemetry source.
             RefreshTiles();
+            RefreshExplorerMessageList();
         }
 
         public void SetPoppedOutState(bool poppedOut)
@@ -274,6 +275,44 @@ namespace MissionPlanner.GCSViews
             {
                 explorerWindow.BringToFront();
             }
+
+            RefreshExplorerMessageList();
+        }
+
+        private void RefreshExplorerMessageList()
+        {
+            if (explorerWindow == null || explorerWindow.IsDisposed || !explorerWindow.Visible)
+            {
+                return;
+            }
+
+            var currentMav = MainV2.comPort?.MAV;
+            if (currentMav == null || currentMav.packetspersecondbuild == null)
+            {
+                return;
+            }
+
+            var recentMessageIds = new List<uint>();
+            var cutoff = DateTime.UtcNow.AddSeconds(-5);
+
+            try
+            {
+                // Use recent packet timestamps so the explorer shows only active traffic.
+                foreach (var packet in currentMav.packetspersecondbuild)
+                {
+                    if (packet.Value >= cutoff)
+                    {
+                        recentMessageIds.Add(packet.Key);
+                    }
+                }
+            }
+            catch (InvalidOperationException)
+            {
+                // Dictionary can mutate while telemetry threads update it; skip this UI tick.
+                return;
+            }
+
+            explorerWindow.UpdateReceivedMessages(recentMessageIds);
         }
 
         private void buttonResetDefaults_Click(object sender, EventArgs e)
@@ -676,6 +715,9 @@ namespace MissionPlanner.GCSViews
 
         private sealed class ExplorerWindowForm : Form
         {
+            private readonly TreeView treeView = new TreeView();
+            private readonly SortedDictionary<uint, TreeNode> messageNodes = new SortedDictionary<uint, TreeNode>();
+
             public ExplorerWindowForm()
             {
                 // Lightweight Step 12 shell hosted in a separate window.
@@ -726,17 +768,61 @@ namespace MissionPlanner.GCSViews
                 headerPanel.Controls.Add(searchTextBox);
                 headerPanel.Controls.Add(searchLabel);
 
-                var treeView = new TreeView
-                {
-                    Name = "explorerTreeView",
-                    Dock = DockStyle.Fill,
-                    HideSelection = false
-                };
-                treeView.Nodes.Add("Explorer (placeholder)");
+                treeView.Name = "explorerTreeView";
+                treeView.Dock = DockStyle.Fill;
+                treeView.HideSelection = false;
+                // Initial status until live MAVLink traffic is observed.
+                treeView.Nodes.Add("Waiting for MAVLink messages...");
 
                 rootPanel.Controls.Add(treeView);
                 rootPanel.Controls.Add(headerPanel);
                 Controls.Add(rootPanel);
+            }
+
+            public void UpdateReceivedMessages(IEnumerable<uint> receivedMessageIds)
+            {
+                if (receivedMessageIds == null)
+                {
+                    return;
+                }
+
+                var addedAny = false;
+
+                foreach (var messageId in receivedMessageIds)
+                {
+                    if (messageNodes.ContainsKey(messageId))
+                    {
+                        continue;
+                    }
+
+                    var messageName = Enum.IsDefined(typeof(MAVLink.MAVLINK_MSG_ID), (int) messageId)
+                        ? ((MAVLink.MAVLINK_MSG_ID) messageId).ToString()
+                        : "UNKNOWN";
+
+                    var node = new TreeNode(messageName)
+                    {
+                        Name = "msg_" + messageId
+                    };
+
+                    messageNodes[messageId] = node;
+                    addedAny = true;
+                }
+
+                if (!addedAny)
+                {
+                    return;
+                }
+
+                treeView.BeginUpdate();
+                treeView.Nodes.Clear();
+
+                // Keep deterministic ordering by MAVLink message ID.
+                foreach (var node in messageNodes.Values)
+                {
+                    treeView.Nodes.Add(node);
+                }
+
+                treeView.EndUpdate();
             }
         }
 
