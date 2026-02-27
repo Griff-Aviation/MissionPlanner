@@ -6221,6 +6221,7 @@ namespace MissionPlanner.GCSViews
         }
         private bool tabQuickDetached = false;
         private bool tabMavlinkDashboardDetached = false;
+        private const string MavlinkDashboardStartLocationKey = "MAVLink_Dashboard_StartLocation";
         private bool tuningwasrightclick;
 
         private void undockDockToolStripMenuItem_Click(object sender, EventArgs e)
@@ -6280,7 +6281,7 @@ namespace MissionPlanner.GCSViews
             TabControl tab = new TabControl();
             dropout.FormBorderStyle = FormBorderStyle.Sizable;
             dropout.ShowInTaskbar = false;
-            dropout.Size = new Size(940, 430);
+            dropout.Size = new Size(980, 430);
             tabMavlinkDashboardDetached = true;
             tab.Appearance = TabAppearance.FlatButtons;
             tab.ItemSize = new Size(0, 0);
@@ -6297,7 +6298,7 @@ namespace MissionPlanner.GCSViews
             mavlinkDashboardView.SetPoppedOutState(true);
             dropout.FormClosed += dropoutMavlinkDashboard_FormClosed;
             dropout.Controls.Add(tab);
-            dropout.RestoreStartupLocation();
+            RestoreMavlinkDashboardStartupLocation(dropout);
             dropout.Show();
         }
 
@@ -6317,13 +6318,87 @@ namespace MissionPlanner.GCSViews
 
         void dropoutMavlinkDashboard_FormClosed(object sender, FormClosedEventArgs e)
         {
-            (sender as Form).SaveStartupLocation();
+            SaveMavlinkDashboardStartupLocation(sender as Form);
+            try
+            {
+                Settings.Instance.Save();
+            }
+            catch (Exception ex)
+            {
+                log.Warn("Failed to save MAVLink dashboard window location.", ex);
+            }
+
             var quickIndex = tabControlactions.TabPages.IndexOf(tabQuick);
             var insertIndex = quickIndex >= 0 ? quickIndex + 1 : 0;
             tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
             tabControlactions.SelectedTab = tabMavlinkDashboard;
             tabMavlinkDashboardDetached = false;
             mavlinkDashboardView.SetPoppedOutState(false);
+        }
+
+        private void RestoreMavlinkDashboardStartupLocation(Form form)
+        {
+            if (form == null)
+            {
+                return;
+            }
+
+            var value = Settings.Instance[MavlinkDashboardStartLocationKey];
+
+            if (string.IsNullOrEmpty(value))
+            {
+                return;
+            }
+
+            try
+            {
+                var saved = value.FromJSON<ControlHelpers.FormStartLocation>();
+
+                if (saved == null)
+                {
+                    return;
+                }
+
+                if (saved.Size.Width > 0 && saved.Size.Height > 0)
+                {
+                    form.Size = saved.Size;
+                }
+
+                var bounds = new Rectangle(saved.Location, saved.Size);
+                var visible = Screen.AllScreens.Any(screen => screen.WorkingArea.IntersectsWith(bounds));
+
+                if (visible)
+                {
+                    form.StartPosition = FormStartPosition.Manual;
+                    form.Location = saved.Location;
+                }
+
+                form.WindowState = saved.State == FormWindowState.Minimized
+                    ? FormWindowState.Normal
+                    : saved.State;
+            }
+            catch (Exception ex)
+            {
+                log.Warn("Failed to restore MAVLink dashboard window location.", ex);
+            }
+        }
+
+        private void SaveMavlinkDashboardStartupLocation(Form form)
+        {
+            if (form == null)
+            {
+                return;
+            }
+
+            var bounds = form.WindowState == FormWindowState.Normal ? form.Bounds : form.RestoreBounds;
+            var state = form.WindowState == FormWindowState.Minimized ? FormWindowState.Normal : form.WindowState;
+
+            Settings.Instance[MavlinkDashboardStartLocationKey] = new ControlHelpers.FormStartLocation
+            {
+                Location = bounds.Location,
+                Size = bounds.Size,
+                State = state
+            }.ToJSON();
         }
 
         private void IDENT_btn_Click(object sender, EventArgs e)

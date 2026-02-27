@@ -2,6 +2,7 @@ using MissionPlanner.Controls;
 using MissionPlanner.MavlinkDashboard;
 using System;
 using System.Collections.Generic;
+using System.Drawing;
 using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews
@@ -12,15 +13,19 @@ namespace MissionPlanner.GCSViews
         public event EventHandler PopInRequested;
         private bool isPoppedOut;
         private readonly IFieldValueSource fieldValueSource = new CurrentStateFieldValueSource();
-        private readonly List<(FieldKey Key, TelemetryTileControl Tile)> tiles = new List<(FieldKey Key, TelemetryTileControl Tile)>();
+        private readonly List<(DashboardTileConfig Config, TelemetryTileControl Tile)> tiles = new List<(DashboardTileConfig Config, TelemetryTileControl Tile)>();
+        private readonly Button buttonResetDefaults = new Button();
+        private DashboardConfig dashboardConfig;
 
         public MavlinkDashboardView()
         {
             InitializeComponent();
+            InitializeResetButton();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             SetPoppedOutState(false);
-            InitializeDefaultTiles();
+            LoadDashboardConfig();
             RefreshTiles();
+            Disposed += MavlinkDashboardView_Disposed;
         }
 
         private void buttonPopOut_Click(object sender, EventArgs e)
@@ -50,47 +55,181 @@ namespace MissionPlanner.GCSViews
         {
             foreach (var tile in tiles)
             {
-                if (fieldValueSource.TryGetValue(tile.Key, out var value))
+                if (fieldValueSource.TryGetValue(tile.Config.FieldKey, out var value))
                 {
+                    if (!string.IsNullOrWhiteSpace(tile.Config.LabelOverride))
+                    {
+                        value.Label = tile.Config.LabelOverride;
+                    }
+
+                    if (!string.IsNullOrWhiteSpace(tile.Config.UnitsOverride))
+                    {
+                        value.Units = tile.Config.UnitsOverride;
+                    }
+
                     tile.Tile.SetFieldValue(value);
                 }
             }
         }
 
-        private void InitializeDefaultTiles()
+        private void LoadDashboardConfig()
         {
-            AddTile("CURRENT_STATE", "MODE");
-            AddTile("CURRENT_STATE", "ARMED");
-            AddTile("CURRENT_STATE", "ROLL");
-            AddTile("CURRENT_STATE", "PITCH");
-            AddTile("CURRENT_STATE", "YAW");
-            AddTile("CURRENT_STATE", "REL_ALT");
-            AddTile("CURRENT_STATE", "AMSL_ALT");
-            AddTile("CURRENT_STATE", "AIR_SPEED");
-            AddTile("CURRENT_STATE", "GROUND_SPEED");
-            AddTile("CURRENT_STATE", "GPS_FIX");
-            AddTile("CURRENT_STATE", "GPS_SATS");
-            AddTile("CURRENT_STATE", "BATTERY1_VOLTAGE");
-            AddTile("CURRENT_STATE", "BATTERY1_REMAINING");
-            AddTile("CURRENT_STATE", "LINK_QUALITY");
-            AddTile("CURRENT_STATE", "RSSI");
+            dashboardConfig = DashboardConfigStore.LoadOrCreateDefault(CreateDefaultConfig);
+            ApplyDashboardConfig(dashboardConfig);
         }
 
-        private void AddTile(string message, string field)
+        private DashboardConfig CreateDefaultConfig()
         {
-            var key = new FieldKey
+            var config = new DashboardConfig();
+            AddDefaultTile(config, "CURRENT_STATE", "MODE");
+            AddDefaultTile(config, "CURRENT_STATE", "ARMED");
+            AddDefaultTile(config, "CURRENT_STATE", "ROLL");
+            AddDefaultTile(config, "CURRENT_STATE", "PITCH");
+            AddDefaultTile(config, "CURRENT_STATE", "YAW");
+            AddDefaultTile(config, "CURRENT_STATE", "REL_ALT");
+            AddDefaultTile(config, "CURRENT_STATE", "AMSL_ALT");
+            AddDefaultTile(config, "CURRENT_STATE", "AIR_SPEED");
+            AddDefaultTile(config, "CURRENT_STATE", "GROUND_SPEED");
+            AddDefaultTile(config, "CURRENT_STATE", "GPS_FIX");
+            AddDefaultTile(config, "CURRENT_STATE", "GPS_SATS");
+            AddDefaultTile(config, "CURRENT_STATE", "BATTERY1_VOLTAGE");
+            AddDefaultTile(config, "CURRENT_STATE", "BATTERY1_REMAINING");
+            AddDefaultTile(config, "CURRENT_STATE", "LINK_QUALITY");
+            AddDefaultTile(config, "CURRENT_STATE", "RSSI");
+            return config;
+        }
+
+        private static void AddDefaultTile(DashboardConfig config, string message, string field)
+        {
+            config.Tiles.Add(new DashboardTileConfig
             {
-                Message = message,
-                Field = field
-            };
+                FieldKey = new FieldKey
+                {
+                    Message = message,
+                    Field = field
+                },
+                TileType = "Value",
+                Thresholds = new DashboardThresholdConfig()
+            });
+        }
+
+        private void ApplyDashboardConfig(DashboardConfig config)
+        {
+            flowLayoutPanelTiles.SuspendLayout();
+            flowLayoutPanelTiles.Controls.Clear();
+            tiles.Clear();
+
+            foreach (var tileConfig in config.Tiles)
+            {
+                AddTile(tileConfig);
+            }
+
+            flowLayoutPanelTiles.ResumeLayout();
+        }
+
+        private void AddTile(DashboardTileConfig tileConfig)
+        {
+            if (tileConfig?.FieldKey == null || string.IsNullOrWhiteSpace(tileConfig.FieldKey.Field))
+            {
+                return;
+            }
+
+            var fieldName = tileConfig.FieldKey.Field;
 
             var tile = new TelemetryTileControl
             {
-                Name = "tile_" + field.ToLowerInvariant()
+                Name = "tile_" + fieldName.ToLowerInvariant()
             };
 
-            tiles.Add((key, tile));
+            if (dashboardConfig?.Layout != null)
+            {
+                tile.Size = new Size(
+                    Math.Max(80, dashboardConfig.Layout.TileWidth),
+                    Math.Max(50, dashboardConfig.Layout.TileHeight));
+            }
+
+            tiles.Add((tileConfig, tile));
             flowLayoutPanelTiles.Controls.Add(tile);
+        }
+
+        private void InitializeResetButton()
+        {
+            buttonResetDefaults.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonResetDefaults.Location = new Point(3, 6);
+            buttonResetDefaults.Name = "buttonResetDefaults";
+            buttonResetDefaults.Size = new Size(60, 23);
+            buttonResetDefaults.TabIndex = 1;
+            buttonResetDefaults.Text = "Reset";
+            buttonResetDefaults.UseVisualStyleBackColor = true;
+            buttonResetDefaults.Click += buttonResetDefaults_Click;
+            panelTop.Controls.Add(buttonResetDefaults);
+        }
+
+        private void buttonResetDefaults_Click(object sender, EventArgs e)
+        {
+            dashboardConfig = CreateDefaultConfig();
+            ApplyDashboardConfig(dashboardConfig);
+            SaveDashboardConfig();
+            RefreshTiles();
+        }
+
+        private void MavlinkDashboardView_Disposed(object sender, EventArgs e)
+        {
+            SaveDashboardConfig();
+        }
+
+        private void SaveDashboardConfig()
+        {
+            if (dashboardConfig == null)
+            {
+                return;
+            }
+
+            dashboardConfig.Layout = dashboardConfig.Layout ?? new DashboardLayoutConfig();
+
+            if (tiles.Count > 0)
+            {
+                dashboardConfig.Layout.TileWidth = tiles[0].Tile.Width;
+                dashboardConfig.Layout.TileHeight = tiles[0].Tile.Height;
+            }
+
+            dashboardConfig.Layout.ColumnsHint = GetColumnsHint();
+            dashboardConfig.Tiles = new List<DashboardTileConfig>();
+
+            foreach (var tile in tiles)
+            {
+                dashboardConfig.Tiles.Add(new DashboardTileConfig
+                {
+                    FieldKey = new FieldKey
+                    {
+                        Message = tile.Config.FieldKey.Message,
+                        Field = tile.Config.FieldKey.Field,
+                        InstanceId = tile.Config.FieldKey.InstanceId
+                    },
+                    LabelOverride = tile.Config.LabelOverride,
+                    UnitsOverride = tile.Config.UnitsOverride,
+                    Thresholds = new DashboardThresholdConfig
+                    {
+                        Warning = tile.Config.Thresholds?.Warning,
+                        Critical = tile.Config.Thresholds?.Critical
+                    },
+                    TileType = tile.Config.TileType
+                });
+            }
+
+            DashboardConfigStore.Save(dashboardConfig);
+        }
+
+        private int GetColumnsHint()
+        {
+            if (tiles.Count == 0)
+            {
+                return 1;
+            }
+
+            var tileWidth = tiles[0].Tile.Width + tiles[0].Tile.Margin.Horizontal;
+            var availableWidth = Math.Max(1, flowLayoutPanelTiles.ClientSize.Width - flowLayoutPanelTiles.Padding.Horizontal);
+            return Math.Max(1, availableWidth / Math.Max(1, tileWidth));
         }
     }
 }
