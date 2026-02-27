@@ -23,6 +23,8 @@ namespace MissionPlanner.GCSViews
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
         // Visual edit-mode cue rendered above all children without affecting layout metrics.
         private readonly EditModeOverlayControl editModeOverlay = new EditModeOverlayControl();
+        private readonly Button buttonExplorer = new Button();
+        private ExplorerWindowForm explorerWindow;
         private DashboardConfig dashboardConfig;
         private TelemetryTileControl draggingTile;
         private Point dragStartPointScreen;
@@ -34,6 +36,7 @@ namespace MissionPlanner.GCSViews
             InitializeComponent();
             InitializeResetButton();
             InitializeEditButton();
+            InitializeExplorerButton();
             InitializeTileContextMenu();
             InitializeEditModeSupport();
             InitializeEditModeOverlay();
@@ -54,6 +57,11 @@ namespace MissionPlanner.GCSViews
             {
                 PopOutRequested?.Invoke(this, EventArgs.Empty);
             }
+        }
+
+        private void buttonExplorer_Click(object sender, EventArgs e)
+        {
+            ShowExplorerWindow();
         }
 
         private void uiTickTimer_Tick(object sender, EventArgs e)
@@ -200,6 +208,20 @@ namespace MissionPlanner.GCSViews
             panelTop.Controls.Add(buttonEditDashboard);
         }
 
+        private void InitializeExplorerButton()
+        {
+            // Explorer is always available and opens in a separate modeless window.
+            buttonExplorer.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonExplorer.Location = new Point(164, 6);
+            buttonExplorer.Name = "buttonExplorer";
+            buttonExplorer.Size = new Size(70, 23);
+            buttonExplorer.TabIndex = 3;
+            buttonExplorer.Text = "Explorer";
+            buttonExplorer.UseVisualStyleBackColor = true;
+            buttonExplorer.Click += buttonExplorer_Click;
+            panelTop.Controls.Add(buttonExplorer);
+        }
+
         private void InitializeTileContextMenu()
         {
             removeTileMenuItem.Name = "removeTileMenuItem";
@@ -226,6 +248,32 @@ namespace MissionPlanner.GCSViews
             Controls.Add(editModeOverlay);
             // Must stay on top so the border is not hidden by docked child controls.
             editModeOverlay.BringToFront();
+        }
+
+        private void ShowExplorerWindow()
+        {
+            if (explorerWindow == null || explorerWindow.IsDisposed)
+            {
+                explorerWindow = new ExplorerWindowForm();
+                MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(explorerWindow);
+            }
+
+            if (!explorerWindow.Visible)
+            {
+                var owner = FindForm();
+                if (owner != null)
+                {
+                    explorerWindow.Show(owner);
+                }
+                else
+                {
+                    explorerWindow.Show();
+                }
+            }
+            else
+            {
+                explorerWindow.BringToFront();
+            }
         }
 
         private void buttonResetDefaults_Click(object sender, EventArgs e)
@@ -256,7 +304,7 @@ namespace MissionPlanner.GCSViews
 
             if (enabled)
             {
-                // Ensure re-ordering/resize repaint does not bury the overlay in z-order.
+                // Ensure re-ordering/resize repaint does not bury the edit overlay.
                 editModeOverlay.BringToFront();
                 editModeOverlay.Invalidate();
             }
@@ -561,6 +609,13 @@ namespace MissionPlanner.GCSViews
 
         private void MavlinkDashboardView_Disposed(object sender, EventArgs e)
         {
+            if (explorerWindow != null && !explorerWindow.IsDisposed)
+            {
+                explorerWindow.Close();
+                explorerWindow.Dispose();
+                explorerWindow = null;
+            }
+
             SaveDashboardConfig();
         }
 
@@ -617,6 +672,72 @@ namespace MissionPlanner.GCSViews
             var tileWidth = tiles[0].Tile.Width + tiles[0].Tile.Margin.Horizontal;
             var availableWidth = Math.Max(1, flowLayoutPanelTiles.ClientSize.Width - flowLayoutPanelTiles.Padding.Horizontal);
             return Math.Max(1, availableWidth / Math.Max(1, tileWidth));
+        }
+
+        private sealed class ExplorerWindowForm : Form
+        {
+            public ExplorerWindowForm()
+            {
+                // Lightweight Step 12 shell hosted in a separate window.
+                Text = "MAVLink Explorer";
+                Name = "mavlinkExplorerWindow";
+                StartPosition = FormStartPosition.CenterParent;
+                MinimumSize = new Size(280, 360);
+                Size = new Size(320, 540);
+
+                var rootPanel = new Panel
+                {
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(8)
+                };
+
+                var searchLabel = new Label
+                {
+                    Name = "explorerSearchLabel",
+                    Text = "Search",
+                    Dock = DockStyle.Top,
+                    Height = 16,
+                    TextAlign = ContentAlignment.BottomLeft
+                };
+
+                var searchTextBox = new TextBox
+                {
+                    Name = "explorerSearchTextBox",
+                    Dock = DockStyle.Top,
+                    Height = 22
+                };
+
+                var showAllMessagesCheckBox = new CheckBox
+                {
+                    Name = "showAllMessagesCheckBox",
+                    Text = "Show All Messages",
+                    Dock = DockStyle.Top,
+                    Height = 22
+                };
+
+                var headerPanel = new Panel
+                {
+                    Name = "explorerHeaderPanel",
+                    Dock = DockStyle.Top,
+                    Height = 70
+                };
+
+                headerPanel.Controls.Add(showAllMessagesCheckBox);
+                headerPanel.Controls.Add(searchTextBox);
+                headerPanel.Controls.Add(searchLabel);
+
+                var treeView = new TreeView
+                {
+                    Name = "explorerTreeView",
+                    Dock = DockStyle.Fill,
+                    HideSelection = false
+                };
+                treeView.Nodes.Add("Explorer (placeholder)");
+
+                rootPanel.Controls.Add(treeView);
+                rootPanel.Controls.Add(headerPanel);
+                Controls.Add(rootPanel);
+            }
         }
 
         private sealed class EditModeOverlayControl : Control
