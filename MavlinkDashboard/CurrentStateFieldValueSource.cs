@@ -127,12 +127,89 @@ namespace MissionPlanner.MavlinkDashboard
                     formattedValue = currentState.alt.ToString("0.0");
                     units = GetAltUnits();
                     return true;
+                case "AMSL_ALT":
+                    formattedValue = currentState.altasl.ToString("0.0");
+                    units = GetAltUnits();
+                    return true;
+                case "AIR_SPEED":
+                    formattedValue = currentState.airspeed.ToString("0.0");
+                    units = GetSpeedUnits();
+                    return true;
                 case "GROUND_SPEED":
                     formattedValue = currentState.groundspeed.ToString("0.0");
                     units = GetSpeedUnits();
                     return true;
+                case "GPS_FIX":
+                    formattedValue = FormatGpsFixType(currentState.gpsstatus);
+                    return true;
+                case "GPS_SATS":
+                    formattedValue = ((int)Math.Round(currentState.satcount)).ToString();
+                    units = "sat";
+                    return true;
+                case "BATTERY1_VOLTAGE":
+                    if (currentState.battery_voltage > 0)
+                    {
+                        formattedValue = currentState.battery_voltage.ToString("0.0");
+                        units = "V";
+                    }
+                    return true;
+                case "BATTERY1_REMAINING":
+                    if (HasBatteryData(currentState))
+                    {
+                        formattedValue = currentState.battery_remaining.ToString("0");
+                        units = "%";
+                    }
+                    return true;
+                case "LINK_QUALITY":
+                    if (currentState.linkqualitygcs > 0)
+                    {
+                        formattedValue = currentState.linkqualitygcs.ToString();
+                        units = "%";
+                    }
+                    else if (Math.Abs(currentState.localsnrdb) > 0.001f)
+                    {
+                        formattedValue = currentState.localsnrdb.ToString("0.0");
+                        units = "dB";
+                    }
+                    return true;
+                case "RSSI":
+                    var rssiValue = currentState.remrssi > 0 ? currentState.remrssi : currentState.rssi;
+                    if (rssiValue > 0)
+                    {
+                        formattedValue = rssiValue.ToString("0");
+                        units = "raw";
+                    }
+                    return true;
                 default:
                     return false;
+            }
+        }
+
+        private static bool HasBatteryData(CurrentState currentState)
+        {
+            return currentState.battery_voltage > 0 || currentState.battery_remaining > 0;
+        }
+
+        private static string FormatGpsFixType(float gpsStatus)
+        {
+            switch ((int)Math.Round(gpsStatus))
+            {
+                case 0:
+                    return "No GPS";
+                case 1:
+                    return "No Fix";
+                case 2:
+                    return "2D";
+                case 3:
+                    return "3D";
+                case 4:
+                    return "DGPS";
+                case 5:
+                    return "RTK Float";
+                case 6:
+                    return "RTK Fixed";
+                default:
+                    return ((int)Math.Round(gpsStatus)).ToString();
             }
         }
 
@@ -201,8 +278,24 @@ namespace MissionPlanner.MavlinkDashboard
                     return "Yaw";
                 case "REL_ALT":
                     return "Rel Alt";
+                case "AMSL_ALT":
+                    return "AMSL Alt";
+                case "AIR_SPEED":
+                    return "Airspeed";
                 case "GROUND_SPEED":
                     return "Groundspeed";
+                case "GPS_FIX":
+                    return "GPS Fix";
+                case "GPS_SATS":
+                    return "GPS Sats";
+                case "BATTERY1_VOLTAGE":
+                    return "Battery 1 V";
+                case "BATTERY1_REMAINING":
+                    return "Battery 1 %";
+                case "LINK_QUALITY":
+                    return "Link";
+                case "RSSI":
+                    return "RSSI";
                 default:
                     return field;
             }

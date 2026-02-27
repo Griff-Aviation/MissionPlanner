@@ -6280,7 +6280,7 @@ namespace MissionPlanner.GCSViews
             TabControl tab = new TabControl();
             dropout.FormBorderStyle = FormBorderStyle.Sizable;
             dropout.ShowInTaskbar = false;
-            dropout.Size = new Size(300, 450);
+            dropout.Size = new Size(940, 430);
             tabMavlinkDashboardDetached = true;
             tab.Appearance = TabAppearance.FlatButtons;
             tab.ItemSize = new Size(0, 0);

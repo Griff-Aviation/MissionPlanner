@@ -59,13 +59,21 @@ namespace MissionPlanner.GCSViews
 
         private void InitializeDefaultTiles()
         {
-            AddTile("CURRENT_STATE", "ARMED");
             AddTile("CURRENT_STATE", "MODE");
+            AddTile("CURRENT_STATE", "ARMED");
             AddTile("CURRENT_STATE", "ROLL");
             AddTile("CURRENT_STATE", "PITCH");
             AddTile("CURRENT_STATE", "YAW");
             AddTile("CURRENT_STATE", "REL_ALT");
+            AddTile("CURRENT_STATE", "AMSL_ALT");
+            AddTile("CURRENT_STATE", "AIR_SPEED");
             AddTile("CURRENT_STATE", "GROUND_SPEED");
+            AddTile("CURRENT_STATE", "GPS_FIX");
+            AddTile("CURRENT_STATE", "GPS_SATS");
+            AddTile("CURRENT_STATE", "BATTERY1_VOLTAGE");
+            AddTile("CURRENT_STATE", "BATTERY1_REMAINING");
+            AddTile("CURRENT_STATE", "LINK_QUALITY");
+            AddTile("CURRENT_STATE", "RSSI");
         }
 
         private void AddTile(string message, string field)
