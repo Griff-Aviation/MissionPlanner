@@ -160,6 +160,20 @@ namespace MissionPlanner.MavlinkDashboard
                         units = "%";
                     }
                     return true;
+                case "BATTERY2_VOLTAGE":
+                    if (currentState.battery_voltage2 > 0)
+                    {
+                        formattedValue = currentState.battery_voltage2.ToString("0.0");
+                        units = "V";
+                    }
+                    return true;
+                case "BATTERY2_REMAINING":
+                    if (HasBattery2Data(currentState))
+                    {
+                        formattedValue = currentState.battery_remaining2.ToString("0");
+                        units = "%";
+                    }
+                    return true;
                 case "LINK_QUALITY":
                     if (currentState.linkqualitygcs > 0)
                     {
@@ -188,6 +202,11 @@ namespace MissionPlanner.MavlinkDashboard
         private static bool HasBatteryData(CurrentState currentState)
         {
             return currentState.battery_voltage > 0 || currentState.battery_remaining > 0;
+        }
+
+        private static bool HasBattery2Data(CurrentState currentState)
+        {
+            return currentState.battery_voltage2 > 0 || currentState.battery_remaining2 > 0;
         }
 
         private static string FormatGpsFixType(float gpsStatus)
@@ -292,6 +311,10 @@ namespace MissionPlanner.MavlinkDashboard
                     return "Battery 1 V";
                 case "BATTERY1_REMAINING":
                     return "Battery 1 %";
+                case "BATTERY2_VOLTAGE":
+                    return "Battery 2 V";
+                case "BATTERY2_REMAINING":
+                    return "Battery 2 %";
                 case "LINK_QUALITY":
                     return "Link";
                 case "RSSI":

@@ -4,6 +4,8 @@ using System;
 using System.ComponentModel;
 using System.Collections.Generic;
 using System.Drawing;
+using System.Globalization;
+using System.Reflection;
 using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews
@@ -122,6 +124,8 @@ namespace MissionPlanner.GCSViews
             AddDefaultTile(config, "CURRENT_STATE", "GPS_SATS");
             AddDefaultTile(config, "CURRENT_STATE", "BATTERY1_VOLTAGE");
             AddDefaultTile(config, "CURRENT_STATE", "BATTERY1_REMAINING");
+            AddDefaultTile(config, "CURRENT_STATE", "BATTERY2_VOLTAGE");
+            AddDefaultTile(config, "CURRENT_STATE", "BATTERY2_REMAINING");
             AddDefaultTile(config, "CURRENT_STATE", "LINK_QUALITY");
             AddDefaultTile(config, "CURRENT_STATE", "RSSI");
             return config;
@@ -313,6 +317,8 @@ namespace MissionPlanner.GCSViews
             }
 
             explorerWindow.UpdateReceivedMessages(recentMessageIds);
+            // preview updates are throttled by the existing 150ms UI timer.
+            explorerWindow.UpdateFieldPreviewValues(currentMav);
         }
 
         private void buttonResetDefaults_Click(object sender, EventArgs e)
@@ -715,15 +721,43 @@ namespace MissionPlanner.GCSViews
 
         private sealed class ExplorerWindowForm : Form
         {
+            private sealed class FieldNodeTag
+            {
+                public uint MessageId;
+                public int? InstanceId;
+                public FieldInfo FieldInfo;
+                public string FieldName;
+                public string LastPreviewText;
+            }
+
+            private sealed class InstanceNodeTag
+            {
+                public uint MessageId;
+                public int InstanceId;
+            }
+
+            private sealed class PlaceholderNodeTag
+            {
+            }
+
+            private sealed class StatusNodeTag
+            {
+            }
+
             private readonly TreeView treeView = new TreeView();
             private readonly TextBox searchTextBox = new TextBox();
             private readonly CheckBox showAllMessagesCheckBox = new CheckBox();
             private readonly List<uint> allDialectMessageIds = new List<uint>();
             private readonly HashSet<uint> currentlyReceivedMessageIds = new HashSet<uint>();
+            private readonly Dictionary<uint, FieldInfo[]> messageFieldsById = new Dictionary<uint, FieldInfo[]>();
+            // Top-level tree nodes keyed by MAVLink message id for incremental add/remove/update.
+            private readonly Dictionary<uint, TreeNode> visibleMessageNodes = new Dictionary<uint, TreeNode>();
+            // Latest BATTERY_STATUS payload cache by battery id (0/1).
+            private readonly Dictionary<int, object> latestBatteryPayloadById = new Dictionary<int, object>();
+            private static readonly uint BatteryStatusMessageId = (uint) MAVLink.MAVLINK_MSG_ID.BATTERY_STATUS;
 
             public ExplorerWindowForm()
             {
-                // Lightweight Step 12 shell hosted in a separate window.
                 Text = "MAVLink Explorer";
                 Name = "mavlinkExplorerWindow";
                 StartPosition = FormStartPosition.CenterParent;
@@ -770,8 +804,12 @@ namespace MissionPlanner.GCSViews
                 treeView.Name = "explorerTreeView";
                 treeView.Dock = DockStyle.Fill;
                 treeView.HideSelection = false;
+                treeView.BeforeExpand += treeView_BeforeExpand;
                 // Initial status until live MAVLink traffic is observed.
-                treeView.Nodes.Add("Waiting for MAVLink messages...");
+                treeView.Nodes.Add(new TreeNode("Waiting for MAVLink messages...")
+                {
+                    Tag = new StatusNodeTag()
+                });
 
                 BuildDialectMessageIndex();
                 rootPanel.Controls.Add(treeView);
@@ -820,14 +858,7 @@ namespace MissionPlanner.GCSViews
                     return;
                 }
 
-                if (showAllMessagesCheckBox.Checked && !addedDialectMessage)
-                {
-                    // In show-all mode, update colors in-place to preserve scroll position and avoid flicker.
-                    UpdateVisibleNodeColors();
-                    return;
-                }
-
-                RebuildMessageTree();
+                ReconcileMessageTree();
             }
 
             private void BuildDialectMessageIndex()
@@ -848,24 +879,22 @@ namespace MissionPlanner.GCSViews
 
             private void showAllMessagesCheckBox_CheckedChanged(object sender, EventArgs e)
             {
-                RebuildMessageTree();
+                ReconcileMessageTree();
             }
 
             private void searchTextBox_TextChanged(object sender, EventArgs e)
             {
-                RebuildMessageTree();
+                ReconcileMessageTree();
             }
 
-            private void RebuildMessageTree()
+            private void ReconcileMessageTree()
             {
-                // Full rebuild is reserved for structural changes: filters, toggle state, or new IDs.
+                // Reconcile visible message rows incrementally to avoid collapsing expanded branches.
                 var showAll = showAllMessagesCheckBox.Checked;
                 var query = (searchTextBox.Text ?? string.Empty).Trim();
                 var hasQuery = query.Length > 0;
-                var addedAny = false;
-
-                treeView.BeginUpdate();
-                treeView.Nodes.Clear();
+                var desiredMessageIds = new List<uint>();
+                var desiredMessageSet = new HashSet<uint>();
 
                 foreach (var messageId in allDialectMessageIds)
                 {
@@ -881,50 +910,198 @@ namespace MissionPlanner.GCSViews
                         continue;
                     }
 
-                    var node = new TreeNode(messageName)
-                    {
-                        Name = "msg_" + messageId,
-                        Tag = messageId
-                    };
-
-                    if (showAll && !isReceived)
-                    {
-                        // In show-all mode, non-received messages are intentionally greyed out.
-                        node.ForeColor = SystemColors.GrayText;
-                    }
-
-                    treeView.Nodes.Add(node);
-                    addedAny = true;
+                    desiredMessageIds.Add(messageId);
+                    desiredMessageSet.Add(messageId);
                 }
 
-                if (!addedAny)
+                treeView.BeginUpdate();
+                RemoveStatusNode();
+
+                var messageIdsToRemove = new List<uint>();
+                foreach (var pair in visibleMessageNodes)
                 {
-                    treeView.Nodes.Add(showAll || hasQuery
+                    if (!desiredMessageSet.Contains(pair.Key))
+                    {
+                        treeView.Nodes.Remove(pair.Value);
+                        messageIdsToRemove.Add(pair.Key);
+                    }
+                }
+
+                foreach (var messageId in messageIdsToRemove)
+                {
+                    visibleMessageNodes.Remove(messageId);
+                }
+
+                foreach (var messageId in desiredMessageIds)
+                {
+                    var isReceived = currentlyReceivedMessageIds.Contains(messageId);
+                    var node = GetOrCreateVisibleMessageNode(messageId);
+                    ApplyMessageNodeColor(node, showAll, isReceived);
+                }
+
+                if (visibleMessageNodes.Count == 0)
+                {
+                    treeView.Nodes.Add(new TreeNode(showAll || hasQuery
                         ? "No messages match current filters."
-                        : "Waiting for MAVLink messages...");
+                        : "Waiting for MAVLink messages...")
+                    {
+                        Tag = new StatusNodeTag()
+                    });
                 }
 
                 treeView.EndUpdate();
             }
 
-            private void UpdateVisibleNodeColors()
+            private TreeNode GetOrCreateVisibleMessageNode(uint messageId)
             {
-                if (!showAllMessagesCheckBox.Checked)
+                if (visibleMessageNodes.TryGetValue(messageId, out var existingNode))
+                {
+                    return existingNode;
+                }
+
+                var createdNode = new TreeNode(ResolveMessageName(messageId))
+                {
+                    Name = "msg_" + messageId,
+                    Tag = messageId
+                };
+
+                if (GetMessageFields(messageId).Length > 0)
+                {
+                    // Add a lightweight child so message rows show an expander before lazy field population.
+                    createdNode.Nodes.Add(new TreeNode { Tag = new PlaceholderNodeTag() });
+                }
+
+                var insertIndex = GetInsertIndex(messageId);
+                treeView.Nodes.Insert(insertIndex, createdNode);
+                visibleMessageNodes[messageId] = createdNode;
+                return createdNode;
+            }
+
+            private int GetInsertIndex(uint messageId)
+            {
+                var index = 0;
+                foreach (TreeNode node in treeView.Nodes)
+                {
+                    if (node.Tag is uint existingMessageId && existingMessageId > messageId)
+                    {
+                        break;
+                    }
+
+                    index++;
+                }
+
+                return index;
+            }
+
+            private void RemoveStatusNode()
+            {
+                TreeNode statusNode = null;
+                foreach (TreeNode node in treeView.Nodes)
+                {
+                    if (node.Tag is StatusNodeTag)
+                    {
+                        statusNode = node;
+                        break;
+                    }
+                }
+
+                if (statusNode != null)
+                {
+                    treeView.Nodes.Remove(statusNode);
+                }
+            }
+
+            private void ApplyMessageNodeColor(TreeNode node, bool showAll, bool isReceived)
+            {
+                node.ForeColor = (showAll && !isReceived)
+                    ? SystemColors.GrayText
+                    : treeView.ForeColor;
+            }
+
+            public void UpdateFieldPreviewValues(MAVState mavState)
+            {
+                if (mavState == null || !treeView.Visible)
                 {
                     return;
                 }
 
-                // Node.Tag stores the message ID so we can recolor without rebuilding nodes.
-                foreach (TreeNode node in treeView.Nodes)
+                CaptureLatestBatteryPayloads(mavState);
+
+                // Only expanded + visible branches are refreshed to keep UI work bounded.
+                foreach (TreeNode messageNode in treeView.Nodes)
                 {
-                    if (!(node.Tag is uint messageId))
+                    if (!(messageNode.Tag is uint messageId) || !messageNode.IsExpanded || !IsNodeVisible(messageNode))
                     {
                         continue;
                     }
 
-                    node.ForeColor = currentlyReceivedMessageIds.Contains(messageId)
-                        ? treeView.ForeColor
-                        : SystemColors.GrayText;
+                    if (messageId == BatteryStatusMessageId)
+                    {
+                        EnsureBatteryInstanceNodes(messageNode);
+                        foreach (TreeNode instanceNode in messageNode.Nodes)
+                        {
+                            if (!(instanceNode.Tag is InstanceNodeTag instanceTag) || !instanceNode.IsExpanded || !IsNodeVisible(instanceNode))
+                            {
+                                continue;
+                            }
+
+                            latestBatteryPayloadById.TryGetValue(instanceTag.InstanceId, out var batteryPacketData);
+                            UpdateFieldPreviewForNode(instanceNode, messageId, instanceTag.InstanceId, batteryPacketData);
+                        }
+
+                        continue;
+                    }
+
+                    var packet = mavState.getPacketLast(messageId);
+                    UpdateFieldPreviewForNode(messageNode, messageId, null, packet?.data);
+                }
+            }
+
+            private void UpdateFieldPreviewForNode(TreeNode parentNode, uint messageId, int? instanceId, object packetData)
+            {
+                EnsureFieldNodes(parentNode, messageId, instanceId);
+
+                foreach (TreeNode fieldNode in parentNode.Nodes)
+                {
+                    if (!(fieldNode.Tag is FieldNodeTag fieldTag) || !IsNodeVisible(fieldNode))
+                    {
+                        continue;
+                    }
+
+                    var previewValue = "--";
+                    if (packetData != null)
+                    {
+                        previewValue = FormatFieldPreviewValue(fieldTag.FieldInfo.GetValue(packetData));
+                    }
+
+                    if (string.Equals(fieldTag.LastPreviewText, previewValue, StringComparison.Ordinal))
+                    {
+                        continue;
+                    }
+
+                    fieldTag.LastPreviewText = previewValue;
+                    fieldNode.Text = fieldTag.FieldName + " = " + previewValue;
+                }
+            }
+
+            private void CaptureLatestBatteryPayloads(MAVState mavState)
+            {
+                // Cache the latest BATTERY_STATUS payload for battery id 0 and 1 only.
+                if (!currentlyReceivedMessageIds.Contains(BatteryStatusMessageId))
+                {
+                    return;
+                }
+
+                var packet = mavState.getPacketLast(BatteryStatusMessageId);
+                var packetData = packet?.data;
+                if (packetData == null)
+                {
+                    return;
+                }
+
+                if (TryGetBatteryInstanceId(packetData, out var batteryId))
+                {
+                    latestBatteryPayloadById[batteryId] = packetData;
                 }
             }
 
@@ -933,6 +1110,264 @@ namespace MissionPlanner.GCSViews
                 return Enum.IsDefined(typeof(MAVLink.MAVLINK_MSG_ID), (int) messageId)
                     ? ((MAVLink.MAVLINK_MSG_ID) messageId).ToString()
                     : "UNKNOWN";
+            }
+
+            private void treeView_BeforeExpand(object sender, TreeViewCancelEventArgs e)
+            {
+                if (e.Node?.Tag is uint messageId)
+                {
+                    if (messageId == BatteryStatusMessageId)
+                    {
+                        // BATTERY_STATUS expands to Battery 1 / Battery 2 nodes.
+                        EnsureBatteryInstanceNodes(e.Node);
+                    }
+                    else
+                    {
+                        // Single-instance messages expand directly to fields.
+                        EnsureFieldNodes(e.Node, messageId, null);
+                    }
+
+                    return;
+                }
+
+                if (!(e.Node?.Tag is InstanceNodeTag instanceTag))
+                {
+                    return;
+                }
+
+                EnsureFieldNodes(e.Node, instanceTag.MessageId, instanceTag.InstanceId);
+            }
+
+            private void EnsureBatteryInstanceNodes(TreeNode messageNode)
+            {
+                if (messageNode == null)
+                {
+                    return;
+                }
+
+                // Keep battery instance rows stable while enforcing exactly Battery 1 (id 0) and Battery 2 (id 1).
+                var desiredInstanceIds = new[] { 0, 1 };
+                var existingInstanceNodes = new Dictionary<int, TreeNode>();
+                var replaceChildren = false;
+
+                foreach (TreeNode childNode in messageNode.Nodes)
+                {
+                    if (childNode.Tag is PlaceholderNodeTag)
+                    {
+                        continue;
+                    }
+
+                    if (childNode.Tag is InstanceNodeTag instanceTag && instanceTag.MessageId == BatteryStatusMessageId)
+                    {
+                        existingInstanceNodes[instanceTag.InstanceId] = childNode;
+                        continue;
+                    }
+
+                    replaceChildren = true;
+                    break;
+                }
+
+                if (replaceChildren || (messageNode.Nodes.Count == 1 && messageNode.Nodes[0].Tag is PlaceholderNodeTag))
+                {
+                    messageNode.Nodes.Clear();
+                    existingInstanceNodes.Clear();
+                }
+
+                var desiredInstanceSet = new HashSet<int>(desiredInstanceIds);
+                var instanceIdsToRemove = new List<int>();
+                foreach (var pair in existingInstanceNodes)
+                {
+                    if (desiredInstanceSet.Contains(pair.Key))
+                    {
+                        continue;
+                    }
+
+                    messageNode.Nodes.Remove(pair.Value);
+                    instanceIdsToRemove.Add(pair.Key);
+                }
+
+                foreach (var instanceId in instanceIdsToRemove)
+                {
+                    existingInstanceNodes.Remove(instanceId);
+                }
+
+                for (var index = 0; index < desiredInstanceIds.Length; index++)
+                {
+                    var instanceId = desiredInstanceIds[index];
+                    if (!existingInstanceNodes.TryGetValue(instanceId, out var instanceNode))
+                    {
+                        instanceNode = new TreeNode(BuildBatteryInstanceLabel(instanceId))
+                        {
+                            Tag = new InstanceNodeTag
+                            {
+                                MessageId = BatteryStatusMessageId,
+                                InstanceId = instanceId
+                            }
+                        };
+
+                        if (GetMessageFields(BatteryStatusMessageId).Length > 0)
+                        {
+                            instanceNode.Nodes.Add(new TreeNode { Tag = new PlaceholderNodeTag() });
+                        }
+
+                        messageNode.Nodes.Insert(index, instanceNode);
+                        existingInstanceNodes[instanceId] = instanceNode;
+                        continue;
+                    }
+
+                    instanceNode.Text = BuildBatteryInstanceLabel(instanceId);
+                    var currentIndex = messageNode.Nodes.IndexOf(instanceNode);
+                    if (currentIndex != index)
+                    {
+                        messageNode.Nodes.Remove(instanceNode);
+                        messageNode.Nodes.Insert(index, instanceNode);
+                    }
+                }
+            }
+
+            private void EnsureFieldNodes(TreeNode parentNode, uint messageId, int? instanceId)
+            {
+                if (parentNode == null)
+                {
+                    return;
+                }
+
+                if (parentNode.Nodes.Count > 0)
+                {
+                    var firstTag = parentNode.Nodes[0].Tag;
+                    if (firstTag is FieldNodeTag firstFieldTag &&
+                        firstFieldTag.MessageId == messageId &&
+                        firstFieldTag.InstanceId == instanceId)
+                    {
+                        return;
+                    }
+
+                    if (!(firstTag is PlaceholderNodeTag))
+                    {
+                        parentNode.Nodes.Clear();
+                    }
+                    else
+                    {
+                        parentNode.Nodes.Clear();
+                    }
+                }
+
+                foreach (var fieldInfo in GetMessageFields(messageId))
+                {
+                    var fieldName = fieldInfo.Name;
+                    parentNode.Nodes.Add(new TreeNode(fieldName + " = --")
+                    {
+                        Tag = new FieldNodeTag
+                        {
+                            MessageId = messageId,
+                            InstanceId = instanceId,
+                            FieldInfo = fieldInfo,
+                            FieldName = fieldName,
+                            LastPreviewText = "--"
+                        }
+                    });
+                }
+            }
+
+            private bool TryGetBatteryInstanceId(object packetData, out int batteryId)
+            {
+                batteryId = 0;
+                if (packetData == null)
+                {
+                    return false;
+                }
+
+                var packetType = packetData.GetType();
+                var instanceField = packetType.GetField("id", BindingFlags.Instance | BindingFlags.Public);
+                if (instanceField == null)
+                {
+                    return false;
+                }
+
+                if (!TryConvertInstanceValue(instanceField.GetValue(packetData), out batteryId))
+                {
+                    return false;
+                }
+
+                return batteryId == 0 || batteryId == 1;
+            }
+
+            private static bool TryConvertInstanceValue(object value, out int result)
+            {
+                result = 0;
+                if (value == null)
+                {
+                    return false;
+                }
+
+                try
+                {
+                    result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
+                    return true;
+                }
+                catch
+                {
+                    return false;
+                }
+            }
+
+            private static string BuildBatteryInstanceLabel(int instanceId)
+            {
+                return "Battery " + (instanceId + 1).ToString(CultureInfo.InvariantCulture);
+            }
+
+            private FieldInfo[] GetMessageFields(uint messageId)
+            {
+                if (messageFieldsById.TryGetValue(messageId, out var cachedFields))
+                {
+                    return cachedFields;
+                }
+
+                var type = MAVLink.MAVLINK_MESSAGE_INFOS.GetMessageInfo(messageId).type;
+                if (type == null)
+                {
+                    cachedFields = Array.Empty<FieldInfo>();
+                }
+                else
+                {
+                    cachedFields = type.GetFields(BindingFlags.Instance | BindingFlags.Public);
+                    Array.Sort(cachedFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
+                }
+
+                messageFieldsById[messageId] = cachedFields;
+                return cachedFields;
+            }
+
+            private bool IsNodeVisible(TreeNode node)
+            {
+                var bounds = node.Bounds;
+                return bounds.Width > 0 && bounds.Height > 0 && treeView.ClientRectangle.IntersectsWith(bounds);
+            }
+
+            private static string FormatFieldPreviewValue(object value)
+            {
+                if (value == null)
+                {
+                    return "--";
+                }
+
+                if (value is byte[] bytes)
+                {
+                    var text = System.Text.Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
+                    return string.IsNullOrEmpty(text) ? "[" + bytes.Length.ToString(CultureInfo.InvariantCulture) + "]" : text;
+                }
+
+                if (value is Array array)
+                {
+                    return "[" + array.Length.ToString(CultureInfo.InvariantCulture) + "]";
+                }
+
+                if (value is IFormattable formattable)
+                {
+                    return formattable.ToString(null, CultureInfo.InvariantCulture);
+                }
+
+                return value.ToString() ?? "--";
             }
         }
 
