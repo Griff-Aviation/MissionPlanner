@@ -22,15 +22,19 @@ namespace MissionPlanner.MavlinkDashboard
     public class DashboardTileConfig
     {
         public FieldKey FieldKey { get; set; } = new FieldKey();
+        public bool IsVisible { get; set; } = true;
         public string LabelOverride { get; set; }
         public string UnitsOverride { get; set; }
+        public int? DecimalPlaces { get; set; }
         public DashboardThresholdConfig Thresholds { get; set; } = new DashboardThresholdConfig();
         public string TileType { get; set; } = "Value";
     }
 
     public class DashboardThresholdConfig
     {
+        public string WarningOperator { get; set; } = ">";
         public double? Warning { get; set; }
+        public string CriticalOperator { get; set; } = ">";
         public double? Critical { get; set; }
     }
 
@@ -123,6 +127,16 @@ namespace MissionPlanner.MavlinkDashboard
                 }
 
                 tile.Thresholds = tile.Thresholds ?? new DashboardThresholdConfig();
+                if (string.IsNullOrWhiteSpace(tile.Thresholds.WarningOperator))
+                {
+                    tile.Thresholds.WarningOperator = ">";
+                }
+
+                if (string.IsNullOrWhiteSpace(tile.Thresholds.CriticalOperator))
+                {
+                    tile.Thresholds.CriticalOperator = ">";
+                }
+
                 if (string.IsNullOrWhiteSpace(tile.TileType))
                 {
                     tile.TileType = "Value";

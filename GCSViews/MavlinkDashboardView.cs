@@ -22,7 +22,9 @@ namespace MissionPlanner.GCSViews
         private readonly Button buttonResetDefaults = new Button();
         private readonly Button buttonEditDashboard = new Button();
         private readonly ContextMenuStrip tileContextMenu = new ContextMenuStrip();
+        private readonly ToolStripMenuItem configureTileMenuItem = new ToolStripMenuItem("Configure...");
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
+        private static readonly string[] ThresholdOperators = { ">", "<", "==", "!=" };
         // Visual edit-mode cue rendered above all children without affecting layout metrics.
         private readonly EditModeOverlayControl editModeOverlay = new EditModeOverlayControl();
         private readonly Button buttonExplorer = new Button();
@@ -96,6 +98,8 @@ namespace MissionPlanner.GCSViews
                         value.Units = tile.Config.UnitsOverride;
                     }
 
+                    value.State = ApplyThresholdState(value, tile.Config.Thresholds);
+                    ApplyDecimalPlaces(value, tile.Config.DecimalPlaces);
                     tile.Tile.SetFieldValue(value);
                 }
             }
@@ -154,6 +158,11 @@ namespace MissionPlanner.GCSViews
 
             foreach (var tileConfig in config.Tiles)
             {
+                if (tileConfig == null || !tileConfig.IsVisible)
+                {
+                    continue;
+                }
+
                 AddTile(tileConfig);
             }
 
@@ -234,8 +243,11 @@ namespace MissionPlanner.GCSViews
 
         private void InitializeTileContextMenu()
         {
+            configureTileMenuItem.Name = "configureTileMenuItem";
+            configureTileMenuItem.Click += configureTileMenuItem_Click;
             removeTileMenuItem.Name = "removeTileMenuItem";
             removeTileMenuItem.Click += removeTileMenuItem_Click;
+            tileContextMenu.Items.Add(configureTileMenuItem);
             tileContextMenu.Items.Add(removeTileMenuItem);
             tileContextMenu.Opening += tileContextMenu_Opening;
         }
@@ -264,7 +276,7 @@ namespace MissionPlanner.GCSViews
         {
             if (explorerWindow == null || explorerWindow.IsDisposed)
             {
-                explorerWindow = new ExplorerWindowForm(IsFieldTileSelected, HandleExplorerFieldCheckedChanged);
+                explorerWindow = new ExplorerWindowForm(IsFieldTileSelected, HandleExplorerFieldCheckedChanged, GetExplorerFieldLabelOverride);
                 MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(explorerWindow);
             }
 
@@ -575,15 +587,15 @@ namespace MissionPlanner.GCSViews
 
         private void tileContextMenu_Opening(object sender, CancelEventArgs e)
         {
-            if (!editMode)
-            {
-                e.Cancel = true;
-                return;
-            }
-
             // Resolve the owning tile from whichever inner child was right-clicked.
             contextMenuTargetTile = GetTileFromControl(tileContextMenu.SourceControl);
-            removeTileMenuItem.Enabled = contextMenuTargetTile != null;
+            configureTileMenuItem.Enabled = contextMenuTargetTile != null;
+            removeTileMenuItem.Enabled = editMode && contextMenuTargetTile != null;
+
+            if (contextMenuTargetTile == null)
+            {
+                e.Cancel = true;
+            }
         }
 
         private void removeTileMenuItem_Click(object sender, EventArgs e)
@@ -599,12 +611,33 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
-            // Dispose removed control immediately; config is persisted when edit mode exits.
-            flowLayoutPanelTiles.Controls.Remove(contextMenuTargetTile);
-            contextMenuTargetTile.Dispose();
-            tiles.RemoveAt(index);
+            RemoveTileForFieldKey(tiles[index].Config.FieldKey);
             contextMenuTargetTile = null;
             RefreshTiles();
+            RefreshExplorerFieldSelectionState();
+        }
+
+        private void configureTileMenuItem_Click(object sender, EventArgs e)
+        {
+            if (contextMenuTargetTile == null)
+            {
+                return;
+            }
+
+            var index = GetTileIndex(contextMenuTargetTile);
+            if (index < 0)
+            {
+                return;
+            }
+
+            var config = tiles[index].Config;
+            if (!ShowTileConfigurationDialog(config))
+            {
+                return;
+            }
+
+            RefreshTiles();
+            SaveDashboardConfig();
             RefreshExplorerFieldSelectionState();
         }
 
@@ -660,31 +693,510 @@ namespace MissionPlanner.GCSViews
             }
 
             dashboardConfig.Layout.ColumnsHint = GetColumnsHint();
-            dashboardConfig.Tiles = new List<DashboardTileConfig>();
+            var persistedTiles = new List<DashboardTileConfig>();
+            var existingTiles = dashboardConfig.Tiles ?? new List<DashboardTileConfig>();
 
             foreach (var tile in tiles)
             {
-                // Persist a copy, not live references, to keep runtime objects decoupled from saved state.
-                dashboardConfig.Tiles.Add(new DashboardTileConfig
-                {
-                    FieldKey = new FieldKey
-                    {
-                        Message = tile.Config.FieldKey.Message,
-                        Field = tile.Config.FieldKey.Field,
-                        InstanceId = tile.Config.FieldKey.InstanceId
-                    },
-                    LabelOverride = tile.Config.LabelOverride,
-                    UnitsOverride = tile.Config.UnitsOverride,
-                    Thresholds = new DashboardThresholdConfig
-                    {
-                        Warning = tile.Config.Thresholds?.Warning,
-                        Critical = tile.Config.Thresholds?.Critical
-                    },
-                    TileType = tile.Config.TileType
-                });
+                // Visible dashboard tiles are persisted first, in the current on-screen order.
+                var visibleConfig = CloneTileConfig(tile.Config);
+                visibleConfig.IsVisible = true;
+                persistedTiles.Add(visibleConfig);
             }
 
+            foreach (var existing in existingTiles)
+            {
+                if (existing?.FieldKey == null || string.IsNullOrWhiteSpace(existing.FieldKey.Field))
+                {
+                    continue;
+                }
+
+                var alreadyPersisted = persistedTiles.Exists(x => FieldKeyEquals(x.FieldKey, existing.FieldKey));
+                if (alreadyPersisted)
+                {
+                    continue;
+                }
+
+                // Keep non-visible entries so re-checking in explorer restores prior tile configuration.
+                var hiddenConfig = CloneTileConfig(existing);
+                hiddenConfig.IsVisible = false;
+                persistedTiles.Add(hiddenConfig);
+            }
+
+            dashboardConfig.Tiles = persistedTiles;
             DashboardConfigStore.Save(dashboardConfig);
+        }
+
+        private bool ShowTileConfigurationDialog(DashboardTileConfig config)
+        {
+            if (config?.FieldKey == null)
+            {
+                return false;
+            }
+
+            using (var dialog = new Form())
+            {
+                // Prefill editable fields with effective defaults so the user starts from current behavior.
+                GetDefaultTileTextValues(config, out var defaultLabelText, out var defaultUnitsText);
+                dialog.Text = "Configure Tile";
+                dialog.Name = "configureTileDialog";
+                dialog.FormBorderStyle = FormBorderStyle.FixedDialog;
+                dialog.StartPosition = FormStartPosition.CenterParent;
+                dialog.MinimizeBox = false;
+                dialog.MaximizeBox = false;
+                dialog.ShowInTaskbar = false;
+                dialog.ClientSize = new Size(360, 230);
+
+                var textLabel = new TextBox
+                {
+                    Text = string.IsNullOrWhiteSpace(config.LabelOverride) ? defaultLabelText : config.LabelOverride,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                var textUnits = new TextBox
+                {
+                    Text = string.IsNullOrWhiteSpace(config.UnitsOverride) ? defaultUnitsText : config.UnitsOverride,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                var existingDecimals = config.DecimalPlaces.HasValue
+                    ? Math.Max(0, Math.Min(6, config.DecimalPlaces.Value))
+                    : -1;
+                var checkAutoDecimals = new CheckBox
+                {
+                    AutoSize = true,
+                    Checked = !config.DecimalPlaces.HasValue
+                };
+                var inputCustomDecimals = new NumericUpDown
+                {
+                    Minimum = 0,
+                    Maximum = 6,
+                    Value = existingDecimals >= 0 ? existingDecimals : 1,
+                    Anchor = AnchorStyles.Left
+                };
+                inputCustomDecimals.Enabled = !checkAutoDecimals.Checked;
+                checkAutoDecimals.CheckedChanged += (s, e) =>
+                {
+                    inputCustomDecimals.Enabled = !checkAutoDecimals.Checked;
+                };
+
+                var decimalsEditor = CreateDecimalPlacesEditor(checkAutoDecimals, inputCustomDecimals);
+
+                var comboWarningOperator = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                comboWarningOperator.Items.AddRange(ThresholdOperators);
+                comboWarningOperator.SelectedItem = ResolveThresholdOperator(config.Thresholds?.WarningOperator);
+
+                var textWarning = new TextBox
+                {
+                    Text = config.Thresholds?.Warning?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                var comboCriticalOperator = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                comboCriticalOperator.Items.AddRange(ThresholdOperators);
+                comboCriticalOperator.SelectedItem = ResolveThresholdOperator(config.Thresholds?.CriticalOperator);
+
+                var textCritical = new TextBox
+                {
+                    Text = config.Thresholds?.Critical?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                var comboInstance = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+
+                var instanceOptions = BuildInstanceOptions(config.FieldKey);
+                foreach (var option in instanceOptions)
+                {
+                    comboInstance.Items.Add(option);
+                }
+
+                comboInstance.SelectedIndex = FindInstanceOptionIndex(instanceOptions, config.FieldKey.InstanceId);
+
+                var warningEditor = CreateThresholdEditor(comboWarningOperator, textWarning);
+                var criticalEditor = CreateThresholdEditor(comboCriticalOperator, textCritical);
+
+                var layout = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    Padding = new Padding(10),
+                    ColumnCount = 2,
+                    RowCount = 7
+                };
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
+                layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+
+                AddConfigRow(layout, 0, "Label", textLabel);
+                AddConfigRow(layout, 1, "Units", textUnits);
+                AddConfigRow(layout, 2, "Decimal pts", decimalsEditor);
+                AddConfigRow(layout, 3, "Warning", warningEditor);
+                AddConfigRow(layout, 4, "Critical", criticalEditor);
+                AddConfigRow(layout, 5, "Instance", comboInstance);
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
+
+                var buttonPanel = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    FlowDirection = FlowDirection.RightToLeft
+                };
+
+                var buttonOk = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
+                var buttonCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+                buttonPanel.Controls.Add(buttonOk);
+                buttonPanel.Controls.Add(buttonCancel);
+
+                layout.Controls.Add(buttonPanel, 0, 6);
+                layout.SetColumnSpan(buttonPanel, 2);
+
+                dialog.Controls.Add(layout);
+                dialog.AcceptButton = buttonOk;
+                dialog.CancelButton = buttonCancel;
+                MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(dialog);
+
+                if (dialog.ShowDialog(this) != DialogResult.OK)
+                {
+                    return false;
+                }
+
+                if (!TryParseNullableDouble(textWarning.Text, out var warningValue) ||
+                    !TryParseNullableDouble(textCritical.Text, out var criticalValue))
+                {
+                    MessageBox.Show(this, "Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
+                        MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                    return false;
+                }
+
+                var labelOverride = NormalizeOverrideText(textLabel.Text);
+                var unitsOverride = NormalizeOverrideText(textUnits.Text);
+                var normalizedDefaultLabel = NormalizeOverrideText(defaultLabelText);
+                var normalizedDefaultUnits = NormalizeOverrideText(defaultUnitsText);
+                config.LabelOverride = string.Equals(labelOverride, normalizedDefaultLabel, StringComparison.Ordinal) ? null : labelOverride;
+                config.UnitsOverride = string.Equals(unitsOverride, normalizedDefaultUnits, StringComparison.Ordinal) ? null : unitsOverride;
+                config.DecimalPlaces = checkAutoDecimals.Checked ? (int?)null : (int)inputCustomDecimals.Value;
+                config.Thresholds = config.Thresholds ?? new DashboardThresholdConfig();
+                config.Thresholds.WarningOperator = ResolveThresholdOperator(comboWarningOperator.SelectedItem as string);
+                config.Thresholds.Warning = warningValue;
+                config.Thresholds.CriticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
+                config.Thresholds.Critical = criticalValue;
+
+                var selectedInstance = comboInstance.SelectedItem as InstanceOption;
+                config.FieldKey.InstanceId = selectedInstance?.InstanceId;
+                return true;
+            }
+        }
+
+        private static string NormalizeOverrideText(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value.Trim();
+        }
+
+        private void GetDefaultTileTextValues(DashboardTileConfig config, out string label, out string units)
+        {
+            label = config?.FieldKey?.Field ?? string.Empty;
+            units = string.Empty;
+
+            if (config?.FieldKey == null)
+            {
+                return;
+            }
+
+            if (fieldValueSource.TryGetValue(config.FieldKey, out var fieldValue))
+            {
+                if (!string.IsNullOrWhiteSpace(fieldValue?.Label))
+                {
+                    label = fieldValue.Label;
+                }
+
+                if (!string.IsNullOrWhiteSpace(fieldValue?.Units))
+                {
+                    units = fieldValue.Units;
+                }
+            }
+
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                label = config.FieldKey.Field;
+            }
+        }
+
+        private static string ResolveThresholdOperator(string value)
+        {
+            foreach (var op in ThresholdOperators)
+            {
+                if (string.Equals(op, value, StringComparison.Ordinal))
+                {
+                    return op;
+                }
+            }
+
+            return ">";
+        }
+
+        private static void ApplyDecimalPlaces(FieldValue fieldValue, int? decimalPlaces)
+        {
+            if (fieldValue == null || !decimalPlaces.HasValue)
+            {
+                return;
+            }
+
+            if (!TryParseNumericValue(fieldValue.FormattedValue, out var numericValue))
+            {
+                return;
+            }
+
+            fieldValue.FormattedValue = numericValue.ToString("F" + decimalPlaces.Value.ToString(CultureInfo.InvariantCulture), CultureInfo.InvariantCulture);
+        }
+
+        private static bool TryParseNullableDouble(string text, out double? value)
+        {
+            value = null;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return true;
+            }
+
+            if (double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var invariantParsed))
+            {
+                value = invariantParsed;
+                return true;
+            }
+
+            if (double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out var localParsed))
+            {
+                value = localParsed;
+                return true;
+            }
+
+            return false;
+        }
+
+        private static void AddConfigRow(TableLayoutPanel layout, int rowIndex, string label, Control editor)
+        {
+            while (layout.RowStyles.Count <= rowIndex)
+            {
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 30));
+            }
+
+            var rowLabel = new Label
+            {
+                Text = label,
+                Dock = DockStyle.Fill,
+                TextAlign = ContentAlignment.MiddleLeft
+            };
+
+            editor.Dock = DockStyle.Fill;
+            layout.Controls.Add(rowLabel, 0, rowIndex);
+            layout.Controls.Add(editor, 1, rowIndex);
+        }
+
+        private static Control CreateDecimalPlacesEditor(CheckBox autoCheckBox, NumericUpDown customInput)
+        {
+            var container = new TableLayoutPanel
+            {
+                ColumnCount = 4,
+                RowCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty
+            };
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 26));
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 60));
+            container.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            var labelAuto = new Label
+            {
+                Text = "auto",
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Anchor = AnchorStyles.Left
+            };
+            var labelCustom = new Label
+            {
+                Text = "custom:",
+                AutoSize = true,
+                TextAlign = ContentAlignment.MiddleLeft,
+                Anchor = AnchorStyles.Left
+            };
+
+            autoCheckBox.Anchor = AnchorStyles.Left;
+            customInput.Anchor = AnchorStyles.Left;
+            container.Controls.Add(labelAuto, 0, 0);
+            container.Controls.Add(autoCheckBox, 1, 0);
+            container.Controls.Add(labelCustom, 2, 0);
+            container.Controls.Add(customInput, 3, 0);
+            return container;
+        }
+
+        private static Control CreateThresholdEditor(ComboBox operatorSelector, TextBox valueEditor)
+        {
+            // Keep operator and numeric threshold value together on one row.
+            var container = new TableLayoutPanel
+            {
+                ColumnCount = 2,
+                RowCount = 1,
+                Dock = DockStyle.Fill,
+                Margin = Padding.Empty
+            };
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 70));
+            container.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+            container.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+
+            operatorSelector.Dock = DockStyle.Fill;
+            valueEditor.Dock = DockStyle.Fill;
+            container.Controls.Add(operatorSelector, 0, 0);
+            container.Controls.Add(valueEditor, 1, 0);
+            return container;
+        }
+
+        private static List<InstanceOption> BuildInstanceOptions(FieldKey fieldKey)
+        {
+            var options = new List<InstanceOption>
+            {
+                new InstanceOption("Default", null)
+            };
+
+            if (!IsBatteryRelatedField(fieldKey?.Field))
+            {
+                return options;
+            }
+
+            // Store raw IDs while showing human-friendly battery names.
+            options.Add(new InstanceOption("Battery 1", 0));
+            options.Add(new InstanceOption("Battery 2", 1));
+
+            var currentInstance = fieldKey?.InstanceId;
+            if (currentInstance.HasValue && currentInstance.Value != 0 && currentInstance.Value != 1)
+            {
+                options.Add(new InstanceOption("Instance " + currentInstance.Value.ToString(CultureInfo.InvariantCulture), currentInstance.Value));
+            }
+
+            return options;
+        }
+
+        private static int FindInstanceOptionIndex(List<InstanceOption> options, int? instanceId)
+        {
+            if (options == null || options.Count == 0)
+            {
+                return -1;
+            }
+
+            var idx = options.FindIndex(x => x.InstanceId == instanceId);
+            return idx >= 0 ? idx : 0;
+        }
+
+        private static bool IsBatteryRelatedField(string fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                return false;
+            }
+
+            var normalized = NormalizeCurrentStateFieldName(fieldName);
+            return normalized.StartsWith("battery_voltage", StringComparison.OrdinalIgnoreCase) ||
+                   normalized.StartsWith("battery_remaining", StringComparison.OrdinalIgnoreCase);
+        }
+
+        private static FieldState ApplyThresholdState(FieldValue fieldValue, DashboardThresholdConfig thresholds)
+        {
+            if (fieldValue == null || fieldValue.State == FieldState.Inactive)
+            {
+                return FieldState.Inactive;
+            }
+
+            if (thresholds == null || (!thresholds.Warning.HasValue && !thresholds.Critical.HasValue))
+            {
+                return fieldValue.State;
+            }
+
+            if (!TryParseNumericValue(fieldValue.FormattedValue, out var numericValue))
+            {
+                return fieldValue.State;
+            }
+
+            var thresholdState = FieldState.Normal;
+            if (thresholds.Critical.HasValue &&
+                ThresholdCrossed(numericValue, thresholds.Critical.Value, thresholds.CriticalOperator))
+            {
+                thresholdState = FieldState.Critical;
+            }
+            else if (thresholds.Warning.HasValue &&
+                     ThresholdCrossed(numericValue, thresholds.Warning.Value, thresholds.WarningOperator))
+            {
+                thresholdState = FieldState.Warning;
+            }
+
+            return MaxState(fieldValue.State, thresholdState);
+        }
+
+        private static bool ThresholdCrossed(double value, double threshold, string comparisonOperator)
+        {
+            switch (ResolveThresholdOperator(comparisonOperator))
+            {
+                case "<":
+                    return value < threshold;
+                case "==":
+                    return Math.Abs(value - threshold) <= 0.0000001d;
+                case "!=":
+                    return Math.Abs(value - threshold) > 0.0000001d;
+                default:
+                    return value > threshold;
+            }
+        }
+
+        private static FieldState MaxState(FieldState left, FieldState right)
+        {
+            if (left == FieldState.Inactive || right == FieldState.Inactive)
+            {
+                return FieldState.Inactive;
+            }
+
+            if (left == FieldState.Critical || right == FieldState.Critical)
+            {
+                return FieldState.Critical;
+            }
+
+            if (left == FieldState.Warning || right == FieldState.Warning)
+            {
+                return FieldState.Warning;
+            }
+
+            return FieldState.Normal;
+        }
+
+        private static bool TryParseNumericValue(string text, out double value)
+        {
+            value = 0;
+            if (string.IsNullOrWhiteSpace(text))
+            {
+                return false;
+            }
+
+            if (double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out var invariantParsed))
+            {
+                value = invariantParsed;
+                return true;
+            }
+
+            if (double.TryParse(text.Trim(), NumberStyles.Float, CultureInfo.CurrentCulture, out var localParsed))
+            {
+                value = localParsed;
+                return true;
+            }
+
+            return false;
         }
 
         private void RefreshExplorerFieldSelectionState()
@@ -700,6 +1212,24 @@ namespace MissionPlanner.GCSViews
         private bool IsFieldTileSelected(FieldKey fieldKey)
         {
             return GetTileIndexByFieldKey(fieldKey) >= 0;
+        }
+
+        private string GetExplorerFieldLabelOverride(FieldKey fieldKey)
+        {
+            var config = FindStoredTileConfig(fieldKey);
+            if (config == null)
+            {
+                return null;
+            }
+
+            if (!string.IsNullOrWhiteSpace(config.LabelOverride))
+            {
+                return config.LabelOverride.Trim();
+            }
+
+            // Also surface default tile labels so explorer entries always show the current tile label text.
+            GetDefaultTileTextValues(config, out var defaultLabelText, out _);
+            return NormalizeOverrideText(defaultLabelText);
         }
 
         private void HandleExplorerFieldCheckedChanged(FieldKey fieldKey, bool isChecked)
@@ -730,9 +1260,18 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
+            var existingConfig = FindStoredTileConfig(fieldKey);
+            if (existingConfig != null)
+            {
+                existingConfig.IsVisible = true;
+                AddTile(existingConfig);
+                return;
+            }
+
             AddTile(new DashboardTileConfig
             {
                 FieldKey = CloneFieldKey(fieldKey),
+                IsVisible = true,
                 TileType = "Value",
                 Thresholds = new DashboardThresholdConfig()
             });
@@ -746,6 +1285,7 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
+            tiles[index].Config.IsVisible = false;
             var tileControl = tiles[index].Tile;
             flowLayoutPanelTiles.Controls.Remove(tileControl);
             tileControl.Dispose();
@@ -844,6 +1384,55 @@ namespace MissionPlanner.GCSViews
             };
         }
 
+        private DashboardTileConfig FindStoredTileConfig(FieldKey fieldKey)
+        {
+            if (dashboardConfig?.Tiles == null)
+            {
+                return null;
+            }
+
+            foreach (var config in dashboardConfig.Tiles)
+            {
+                if (config?.FieldKey != null && FieldKeyEquals(config.FieldKey, fieldKey))
+                {
+                    return config;
+                }
+            }
+
+            return null;
+        }
+
+        private static DashboardTileConfig CloneTileConfig(DashboardTileConfig source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            // Persist a copy, not live references, to keep runtime objects decoupled from saved state.
+            return new DashboardTileConfig
+            {
+                FieldKey = source.FieldKey == null ? null : new FieldKey
+                {
+                    Message = source.FieldKey.Message,
+                    Field = source.FieldKey.Field,
+                    InstanceId = source.FieldKey.InstanceId
+                },
+                IsVisible = source.IsVisible,
+                LabelOverride = source.LabelOverride,
+                UnitsOverride = source.UnitsOverride,
+                DecimalPlaces = source.DecimalPlaces,
+                Thresholds = new DashboardThresholdConfig
+                {
+                    WarningOperator = source.Thresholds?.WarningOperator,
+                    Warning = source.Thresholds?.Warning,
+                    CriticalOperator = source.Thresholds?.CriticalOperator,
+                    Critical = source.Thresholds?.Critical
+                },
+                TileType = source.TileType
+            };
+        }
+
         private int GetColumnsHint()
         {
             if (tiles.Count == 0)
@@ -856,6 +1445,23 @@ namespace MissionPlanner.GCSViews
             return Math.Max(1, availableWidth / Math.Max(1, tileWidth));
         }
 
+        private sealed class InstanceOption
+        {
+            public InstanceOption(string label, int? instanceId)
+            {
+                Label = label;
+                InstanceId = instanceId;
+            }
+
+            public string Label { get; }
+            public int? InstanceId { get; }
+
+            public override string ToString()
+            {
+                return Label;
+            }
+        }
+
         private sealed class ExplorerWindowForm : Form
         {
             private const string CurrentStateMessageName = "CURRENT_STATE";
@@ -864,28 +1470,52 @@ namespace MissionPlanner.GCSViews
             {
                 public string FieldName;
                 public string DisplayName;
+                public string OverrideLabel;
 
                 public override string ToString()
                 {
+                    if (ShouldShowOverrideLabel())
+                    {
+                        // Show configured tile label override alongside the base field label.
+                        return DisplayName + " [" + OverrideLabel + "]";
+                    }
+
                     return DisplayName;
+                }
+
+                private bool ShouldShowOverrideLabel()
+                {
+                    if (string.IsNullOrWhiteSpace(OverrideLabel))
+                    {
+                        return false;
+                    }
+
+                    var overrideText = OverrideLabel.Trim();
+                    return !string.Equals(overrideText, (DisplayName ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase) &&
+                           !string.Equals(overrideText, (FieldName ?? string.Empty).Trim(), StringComparison.OrdinalIgnoreCase);
                 }
             }
 
             private readonly Label searchLabel = new Label();
             private readonly TextBox searchTextBox = new TextBox();
+            private readonly CheckBox showAllFieldTypesCheckBox = new CheckBox();
             private readonly CheckedListBox fieldList = new CheckedListBox();
             private readonly List<FieldEntry> allFields = new List<FieldEntry>();
             private readonly List<FieldEntry> visibleFields = new List<FieldEntry>();
             private readonly Func<FieldKey, bool> isFieldTileSelected;
             private readonly Action<FieldKey, bool> fieldCheckedChanged;
+            private readonly Func<FieldKey, string> getFieldLabelOverride;
             private bool suppressFieldListEvents;
             private int lastCustomFieldNameCount = -1;
             private bool hasCurrentStateDisplayNames;
+            private bool showAllFieldTypes;
 
-            public ExplorerWindowForm(Func<FieldKey, bool> isFieldTileSelected, Action<FieldKey, bool> fieldCheckedChanged)
+            public ExplorerWindowForm(Func<FieldKey, bool> isFieldTileSelected, Action<FieldKey, bool> fieldCheckedChanged,
+                Func<FieldKey, string> getFieldLabelOverride)
             {
                 this.isFieldTileSelected = isFieldTileSelected;
                 this.fieldCheckedChanged = fieldCheckedChanged;
+                this.getFieldLabelOverride = getFieldLabelOverride;
 
                 Text = "Dashboard Fields";
                 Name = "mavlinkExplorerWindow";
@@ -901,7 +1531,7 @@ namespace MissionPlanner.GCSViews
                 var headerPanel = new Panel
                 {
                     Dock = DockStyle.Top,
-                    Height = 44
+                    Height = 66
                 };
 
                 searchLabel.Name = "explorerSearchLabel";
@@ -916,6 +1546,13 @@ namespace MissionPlanner.GCSViews
                 searchTextBox.TextChanged += searchTextBox_TextChanged;
                 searchTextBox.KeyDown += searchTextBox_KeyDown;
 
+                showAllFieldTypesCheckBox.Name = "explorerShowAllFieldTypesCheckBox";
+                showAllFieldTypesCheckBox.Text = "Show all field types (strings included)";
+                showAllFieldTypesCheckBox.Dock = DockStyle.Top;
+                showAllFieldTypesCheckBox.Height = 20;
+                showAllFieldTypesCheckBox.Checked = false;
+                showAllFieldTypesCheckBox.CheckedChanged += showAllFieldTypesCheckBox_CheckedChanged;
+
                 fieldList.Name = "explorerFieldList";
                 fieldList.Dock = DockStyle.Fill;
                 fieldList.CheckOnClick = true;
@@ -923,10 +1560,11 @@ namespace MissionPlanner.GCSViews
                 fieldList.ItemCheck += fieldList_ItemCheck;
                 fieldList.KeyDown += fieldList_KeyDown;
 
-                // Keep the field picker lean: all tile options come from CurrentState numeric/bool properties.
+                // Default explorer list is numeric/bool; optional toggle exposes all field types.
                 BuildFieldCatalog(MainV2.comPort?.MAV?.cs);
                 ApplyFilterAndRebind();
 
+                headerPanel.Controls.Add(showAllFieldTypesCheckBox);
                 headerPanel.Controls.Add(searchTextBox);
                 headerPanel.Controls.Add(searchLabel);
                 rootPanel.Controls.Add(fieldList);
@@ -936,6 +1574,7 @@ namespace MissionPlanner.GCSViews
 
             public void RefreshFieldSelectionState()
             {
+                UpdateOverrideLabelsForVisibleFields();
                 suppressFieldListEvents = true;
                 try
                 {
@@ -989,6 +1628,13 @@ namespace MissionPlanner.GCSViews
                 searchTextBox.Clear();
                 e.Handled = true;
                 e.SuppressKeyPress = true;
+            }
+
+            private void showAllFieldTypesCheckBox_CheckedChanged(object sender, EventArgs e)
+            {
+                showAllFieldTypes = showAllFieldTypesCheckBox.Checked;
+                BuildFieldCatalog(MainV2.comPort?.MAV?.cs);
+                ApplyFilterAndRebind();
             }
 
             private void fieldList_ItemCheck(object sender, ItemCheckEventArgs e)
@@ -1095,7 +1741,9 @@ namespace MissionPlanner.GCSViews
                     }
 
                     var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
-                    if (!IsNumericPropertyType(propertyType) && propertyType != typeof(bool))
+                    if (!showAllFieldTypes &&
+                        !IsNumericPropertyType(propertyType) &&
+                        propertyType != typeof(bool))
                     {
                         continue;
                     }
@@ -1121,13 +1769,16 @@ namespace MissionPlanner.GCSViews
             private void ApplyFilterAndRebind()
             {
                 var query = (searchTextBox.Text ?? string.Empty).Trim();
+                UpdateOverrideLabelsForAllFields();
 
                 visibleFields.Clear();
                 foreach (var entry in allFields)
                 {
                     if (!string.IsNullOrWhiteSpace(query) &&
                         entry.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
-                        entry.FieldName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                        entry.FieldName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        (entry.OverrideLabel == null ||
+                         entry.OverrideLabel.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0))
                     {
                         continue;
                     }
@@ -1154,6 +1805,46 @@ namespace MissionPlanner.GCSViews
                 {
                     suppressFieldListEvents = false;
                 }
+            }
+
+            private void UpdateOverrideLabelsForAllFields()
+            {
+                foreach (var entry in allFields)
+                {
+                    entry.OverrideLabel = GetOverrideLabel(entry.FieldName);
+                }
+            }
+
+            private void UpdateOverrideLabelsForVisibleFields()
+            {
+                var labelsUpdated = false;
+                foreach (var entry in visibleFields)
+                {
+                    var current = entry.OverrideLabel;
+                    var updated = GetOverrideLabel(entry.FieldName);
+                    if (!string.Equals(current, updated, StringComparison.Ordinal))
+                    {
+                        entry.OverrideLabel = updated;
+                        labelsUpdated = true;
+                    }
+                }
+
+                if (labelsUpdated)
+                {
+                    fieldList.Refresh();
+                }
+            }
+
+            private string GetOverrideLabel(string fieldName)
+            {
+                if (getFieldLabelOverride == null)
+                {
+                    return null;
+                }
+
+                var fieldKey = CreateCurrentStateFieldKey(fieldName);
+                var label = getFieldLabelOverride(fieldKey);
+                return string.IsNullOrWhiteSpace(label) ? null : label.Trim();
             }
 
             private static int GetCustomFieldNameCount()

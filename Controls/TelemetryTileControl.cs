@@ -68,9 +68,16 @@ namespace MissionPlanner.Controls
             }
 
             labelName.Text = fieldValue.Label ?? string.Empty;
-            labelValue.Text = string.IsNullOrEmpty(fieldValue.Units)
-                ? (fieldValue.FormattedValue ?? string.Empty)
-                : (fieldValue.FormattedValue ?? string.Empty) + " " + fieldValue.Units;
+            if (string.IsNullOrEmpty(fieldValue.Units))
+            {
+                labelName.Text = fieldValue.Label ?? string.Empty;
+            }
+            else
+            {
+                labelName.Text = (fieldValue.Label ?? string.Empty) + " (" + fieldValue.Units + ")";
+            }
+
+            labelValue.Text = fieldValue.FormattedValue ?? string.Empty;
             telemetryState = fieldValue.State == FieldState.Selected ? FieldState.Normal : fieldValue.State;
             ApplyStateVisual();
         }
