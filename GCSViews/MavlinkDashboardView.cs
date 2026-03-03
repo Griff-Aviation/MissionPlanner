@@ -158,6 +158,7 @@ namespace MissionPlanner.GCSViews
             }
 
             flowLayoutPanelTiles.ResumeLayout();
+            RefreshExplorerFieldSelectionState();
         }
 
         private void AddTile(DashboardTileConfig tileConfig)
@@ -168,10 +169,13 @@ namespace MissionPlanner.GCSViews
             }
 
             var fieldName = tileConfig.FieldKey.Field;
+            var instanceSuffix = tileConfig.FieldKey.InstanceId.HasValue
+                ? "_" + tileConfig.FieldKey.InstanceId.Value.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
 
             var tile = new TelemetryTileControl
             {
-                Name = "tile_" + fieldName.ToLowerInvariant()
+                Name = "tile_" + fieldName.ToLowerInvariant() + instanceSuffix
             };
 
             if (dashboardConfig?.Layout != null)
@@ -185,6 +189,7 @@ namespace MissionPlanner.GCSViews
             tiles.Add((tileConfig, tile));
             flowLayoutPanelTiles.Controls.Add(tile);
             UpdateTileInteractionState();
+            RefreshExplorerFieldSelectionState();
         }
 
         private void InitializeResetButton()
@@ -259,7 +264,7 @@ namespace MissionPlanner.GCSViews
         {
             if (explorerWindow == null || explorerWindow.IsDisposed)
             {
-                explorerWindow = new ExplorerWindowForm();
+                explorerWindow = new ExplorerWindowForm(IsFieldTileSelected, HandleExplorerFieldCheckedChanged);
                 MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(explorerWindow);
             }
 
@@ -281,6 +286,7 @@ namespace MissionPlanner.GCSViews
             }
 
             RefreshExplorerMessageList();
+            RefreshExplorerFieldSelectionState();
         }
 
         private void RefreshExplorerMessageList()
@@ -290,35 +296,8 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
-            var currentMav = MainV2.comPort?.MAV;
-            if (currentMav == null || currentMav.packetspersecondbuild == null)
-            {
-                return;
-            }
-
-            var recentMessageIds = new List<uint>();
-            var cutoff = DateTime.UtcNow.AddSeconds(-5);
-
-            try
-            {
-                // Use recent packet timestamps so the explorer shows only active traffic.
-                foreach (var packet in currentMav.packetspersecondbuild)
-                {
-                    if (packet.Value >= cutoff)
-                    {
-                        recentMessageIds.Add(packet.Key);
-                    }
-                }
-            }
-            catch (InvalidOperationException)
-            {
-                // Dictionary can mutate while telemetry threads update it; skip this UI tick.
-                return;
-            }
-
-            explorerWindow.UpdateReceivedMessages(recentMessageIds);
-            // preview updates are throttled by the existing 150ms UI timer.
-            explorerWindow.UpdateFieldPreviewValues(currentMav);
+            // Explorer previews are sourced from CurrentState (same model used by "Display This").
+            explorerWindow.UpdateCurrentStatePreviewValues(MainV2.comPort?.MAV?.cs);
         }
 
         private void buttonResetDefaults_Click(object sender, EventArgs e)
@@ -626,6 +605,7 @@ namespace MissionPlanner.GCSViews
             tiles.RemoveAt(index);
             contextMenuTargetTile = null;
             RefreshTiles();
+            RefreshExplorerFieldSelectionState();
         }
 
         private int GetTileIndex(TelemetryTileControl tile)
@@ -707,6 +687,163 @@ namespace MissionPlanner.GCSViews
             DashboardConfigStore.Save(dashboardConfig);
         }
 
+        private void RefreshExplorerFieldSelectionState()
+        {
+            if (explorerWindow == null || explorerWindow.IsDisposed)
+            {
+                return;
+            }
+
+            explorerWindow.RefreshFieldSelectionState();
+        }
+
+        private bool IsFieldTileSelected(FieldKey fieldKey)
+        {
+            return GetTileIndexByFieldKey(fieldKey) >= 0;
+        }
+
+        private void HandleExplorerFieldCheckedChanged(FieldKey fieldKey, bool isChecked)
+        {
+            if (fieldKey == null)
+            {
+                return;
+            }
+
+            if (isChecked)
+            {
+                EnsureTileForFieldKey(fieldKey);
+            }
+            else
+            {
+                RemoveTileForFieldKey(fieldKey);
+            }
+
+            RefreshTiles();
+            SaveDashboardConfig();
+            RefreshExplorerFieldSelectionState();
+        }
+
+        private void EnsureTileForFieldKey(FieldKey fieldKey)
+        {
+            if (GetTileIndexByFieldKey(fieldKey) >= 0)
+            {
+                return;
+            }
+
+            AddTile(new DashboardTileConfig
+            {
+                FieldKey = CloneFieldKey(fieldKey),
+                TileType = "Value",
+                Thresholds = new DashboardThresholdConfig()
+            });
+        }
+
+        private void RemoveTileForFieldKey(FieldKey fieldKey)
+        {
+            var index = GetTileIndexByFieldKey(fieldKey);
+            if (index < 0)
+            {
+                return;
+            }
+
+            var tileControl = tiles[index].Tile;
+            flowLayoutPanelTiles.Controls.Remove(tileControl);
+            tileControl.Dispose();
+            tiles.RemoveAt(index);
+        }
+
+        private int GetTileIndexByFieldKey(FieldKey fieldKey)
+        {
+            for (var index = 0; index < tiles.Count; index++)
+            {
+                if (FieldKeyEquals(tiles[index].Config.FieldKey, fieldKey))
+                {
+                    return index;
+                }
+            }
+
+            return -1;
+        }
+
+        private static bool FieldKeyEquals(FieldKey left, FieldKey right)
+        {
+            if (left == null || right == null)
+            {
+                return false;
+            }
+
+            var leftMessage = left.Message ?? string.Empty;
+            var rightMessage = right.Message ?? string.Empty;
+            var useCurrentStateAlias =
+                string.Equals(leftMessage, "CURRENT_STATE", StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(rightMessage, "CURRENT_STATE", StringComparison.OrdinalIgnoreCase);
+
+            var leftField = useCurrentStateAlias ? NormalizeCurrentStateFieldName(left.Field) : (left.Field ?? string.Empty);
+            var rightField = useCurrentStateAlias ? NormalizeCurrentStateFieldName(right.Field) : (right.Field ?? string.Empty);
+
+            return string.Equals(leftMessage, rightMessage, StringComparison.OrdinalIgnoreCase)
+                && string.Equals(leftField, rightField, StringComparison.OrdinalIgnoreCase)
+                && left.InstanceId == right.InstanceId;
+        }
+
+        private static string NormalizeCurrentStateFieldName(string fieldName)
+        {
+            if (string.IsNullOrWhiteSpace(fieldName))
+            {
+                return string.Empty;
+            }
+
+            switch (fieldName.ToUpperInvariant())
+            {
+                case "MODE":
+                    return "mode";
+                case "ARMED":
+                    return "armed";
+                case "ROLL":
+                    return "roll";
+                case "PITCH":
+                    return "pitch";
+                case "YAW":
+                    return "yaw";
+                case "REL_ALT":
+                    return "alt";
+                case "AMSL_ALT":
+                    return "altasl";
+                case "AIR_SPEED":
+                    return "airspeed";
+                case "GROUND_SPEED":
+                    return "groundspeed";
+                case "GPS_FIX":
+                    return "gpsstatus";
+                case "GPS_SATS":
+                    return "satcount";
+                case "BATTERY1_VOLTAGE":
+                    return "battery_voltage";
+                case "BATTERY1_REMAINING":
+                    return "battery_remaining";
+                case "BATTERY2_VOLTAGE":
+                    return "battery_voltage2";
+                case "BATTERY2_REMAINING":
+                    return "battery_remaining2";
+                case "LINK_QUALITY":
+                    return "linkqualitygcs";
+                case "RSSI":
+                    return "rssi";
+                default:
+                    return fieldName;
+            }
+        }
+
+        private static FieldKey CloneFieldKey(FieldKey fieldKey)
+        {
+            return new FieldKey
+            {
+                Message = fieldKey.Message,
+                Field = fieldKey.Field,
+                InstanceId = fieldKey.InstanceId
+            };
+        }
+
         private int GetColumnsHint()
         {
             if (tiles.Count == 0)
@@ -721,44 +858,36 @@ namespace MissionPlanner.GCSViews
 
         private sealed class ExplorerWindowForm : Form
         {
-            private sealed class FieldNodeTag
+            private const string CurrentStateMessageName = "CURRENT_STATE";
+
+            private sealed class FieldEntry
             {
-                public uint MessageId;
-                public int? InstanceId;
-                public FieldInfo FieldInfo;
                 public string FieldName;
-                public string LastPreviewText;
+                public string DisplayName;
+
+                public override string ToString()
+                {
+                    return DisplayName;
+                }
             }
 
-            private sealed class InstanceNodeTag
-            {
-                public uint MessageId;
-                public int InstanceId;
-            }
-
-            private sealed class PlaceholderNodeTag
-            {
-            }
-
-            private sealed class StatusNodeTag
-            {
-            }
-
-            private readonly TreeView treeView = new TreeView();
+            private readonly Label searchLabel = new Label();
             private readonly TextBox searchTextBox = new TextBox();
-            private readonly CheckBox showAllMessagesCheckBox = new CheckBox();
-            private readonly List<uint> allDialectMessageIds = new List<uint>();
-            private readonly HashSet<uint> currentlyReceivedMessageIds = new HashSet<uint>();
-            private readonly Dictionary<uint, FieldInfo[]> messageFieldsById = new Dictionary<uint, FieldInfo[]>();
-            // Top-level tree nodes keyed by MAVLink message id for incremental add/remove/update.
-            private readonly Dictionary<uint, TreeNode> visibleMessageNodes = new Dictionary<uint, TreeNode>();
-            // Latest BATTERY_STATUS payload cache by battery id (0/1).
-            private readonly Dictionary<int, object> latestBatteryPayloadById = new Dictionary<int, object>();
-            private static readonly uint BatteryStatusMessageId = (uint) MAVLink.MAVLINK_MSG_ID.BATTERY_STATUS;
+            private readonly CheckedListBox fieldList = new CheckedListBox();
+            private readonly List<FieldEntry> allFields = new List<FieldEntry>();
+            private readonly List<FieldEntry> visibleFields = new List<FieldEntry>();
+            private readonly Func<FieldKey, bool> isFieldTileSelected;
+            private readonly Action<FieldKey, bool> fieldCheckedChanged;
+            private bool suppressFieldListEvents;
+            private int lastCustomFieldNameCount = -1;
+            private bool hasCurrentStateDisplayNames;
 
-            public ExplorerWindowForm()
+            public ExplorerWindowForm(Func<FieldKey, bool> isFieldTileSelected, Action<FieldKey, bool> fieldCheckedChanged)
             {
-                Text = "MAVLink Explorer";
+                this.isFieldTileSelected = isFieldTileSelected;
+                this.fieldCheckedChanged = fieldCheckedChanged;
+
+                Text = "Dashboard Fields";
                 Name = "mavlinkExplorerWindow";
                 StartPosition = FormStartPosition.CenterParent;
                 MinimumSize = new Size(280, 360);
@@ -769,605 +898,306 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Fill,
                     Padding = new Padding(8)
                 };
-
-                var searchLabel = new Label
+                var headerPanel = new Panel
                 {
-                    Name = "explorerSearchLabel",
-                    Text = "Search",
                     Dock = DockStyle.Top,
-                    Height = 16,
-                    TextAlign = ContentAlignment.BottomLeft
+                    Height = 44
                 };
+
+                searchLabel.Name = "explorerSearchLabel";
+                searchLabel.Text = "Search";
+                searchLabel.Dock = DockStyle.Top;
+                searchLabel.Height = 16;
+                searchLabel.TextAlign = ContentAlignment.BottomLeft;
 
                 searchTextBox.Name = "explorerSearchTextBox";
                 searchTextBox.Dock = DockStyle.Top;
                 searchTextBox.Height = 22;
                 searchTextBox.TextChanged += searchTextBox_TextChanged;
+                searchTextBox.KeyDown += searchTextBox_KeyDown;
 
-                showAllMessagesCheckBox.Name = "showAllMessagesCheckBox";
-                showAllMessagesCheckBox.Text = "Show All Messages";
-                showAllMessagesCheckBox.Dock = DockStyle.Top;
-                showAllMessagesCheckBox.Height = 22;
-                showAllMessagesCheckBox.CheckedChanged += showAllMessagesCheckBox_CheckedChanged;
+                fieldList.Name = "explorerFieldList";
+                fieldList.Dock = DockStyle.Fill;
+                fieldList.CheckOnClick = true;
+                fieldList.IntegralHeight = false;
+                fieldList.ItemCheck += fieldList_ItemCheck;
+                fieldList.KeyDown += fieldList_KeyDown;
 
-                var headerPanel = new Panel
-                {
-                    Name = "explorerHeaderPanel",
-                    Dock = DockStyle.Top,
-                    Height = 70
-                };
+                // Keep the field picker lean: all tile options come from CurrentState numeric/bool properties.
+                BuildFieldCatalog(MainV2.comPort?.MAV?.cs);
+                ApplyFilterAndRebind();
 
-                headerPanel.Controls.Add(showAllMessagesCheckBox);
                 headerPanel.Controls.Add(searchTextBox);
                 headerPanel.Controls.Add(searchLabel);
-
-                treeView.Name = "explorerTreeView";
-                treeView.Dock = DockStyle.Fill;
-                treeView.HideSelection = false;
-                treeView.BeforeExpand += treeView_BeforeExpand;
-                // Initial status until live MAVLink traffic is observed.
-                treeView.Nodes.Add(new TreeNode("Waiting for MAVLink messages...")
-                {
-                    Tag = new StatusNodeTag()
-                });
-
-                BuildDialectMessageIndex();
-                rootPanel.Controls.Add(treeView);
+                rootPanel.Controls.Add(fieldList);
                 rootPanel.Controls.Add(headerPanel);
                 Controls.Add(rootPanel);
             }
 
-            public void UpdateReceivedMessages(IEnumerable<uint> receivedMessageIds)
+            public void RefreshFieldSelectionState()
             {
-                if (receivedMessageIds == null)
+                suppressFieldListEvents = true;
+                try
+                {
+                    for (var i = 0; i < visibleFields.Count && i < fieldList.Items.Count; i++)
+                    {
+                        var fieldKey = CreateCurrentStateFieldKey(visibleFields[i].FieldName);
+                        var shouldBeChecked = isFieldTileSelected != null && isFieldTileSelected(fieldKey);
+                        if (fieldList.GetItemChecked(i) != shouldBeChecked)
+                        {
+                            fieldList.SetItemChecked(i, shouldBeChecked);
+                        }
+                    }
+                }
+                finally
+                {
+                    suppressFieldListEvents = false;
+                }
+            }
+
+            public void UpdateCurrentStatePreviewValues(CurrentState currentState)
+            {
+                if (currentState == null)
                 {
                     return;
                 }
 
-                // Snapshot current tick's IDs so set comparisons stay deterministic.
-                var nextReceivedMessageIds = new HashSet<uint>(receivedMessageIds);
-                var receivedSetChanged = !nextReceivedMessageIds.SetEquals(currentlyReceivedMessageIds);
-                var addedDialectMessage = false;
-
-                if (receivedSetChanged)
+                // Rebuild when CurrentState descriptions become available or custom labels change.
+                var customFieldCount = GetCustomFieldNameCount();
+                if (!hasCurrentStateDisplayNames || customFieldCount != lastCustomFieldNameCount)
                 {
-                    currentlyReceivedMessageIds.Clear();
-                    currentlyReceivedMessageIds.UnionWith(nextReceivedMessageIds);
-                }
-
-                // Include runtime-only IDs if they appear, while retaining sorted display order.
-                foreach (var messageId in nextReceivedMessageIds)
-                {
-                    if (allDialectMessageIds.Contains(messageId))
-                    {
-                        continue;
-                    }
-
-                    allDialectMessageIds.Add(messageId);
-                    addedDialectMessage = true;
-                }
-
-                if (addedDialectMessage)
-                {
-                    allDialectMessageIds.Sort();
-                }
-
-                // No data/catalog changes: keep current tree and scrollbar position.
-                if (!receivedSetChanged && !addedDialectMessage)
-                {
+                    BuildFieldCatalog(currentState);
+                    ApplyFilterAndRebind();
                     return;
                 }
 
-                ReconcileMessageTree();
-            }
-
-            private void BuildDialectMessageIndex()
-            {
-                // Seed with known MAVLink enum IDs so show-all can render before traffic arrives.
-                var seen = new HashSet<uint>();
-                foreach (int value in Enum.GetValues(typeof(MAVLink.MAVLINK_MSG_ID)))
-                {
-                    var messageId = (uint) value;
-                    if (seen.Add(messageId))
-                    {
-                        allDialectMessageIds.Add(messageId);
-                    }
-                }
-
-                allDialectMessageIds.Sort();
-            }
-
-            private void showAllMessagesCheckBox_CheckedChanged(object sender, EventArgs e)
-            {
-                ReconcileMessageTree();
+                RefreshFieldSelectionState();
             }
 
             private void searchTextBox_TextChanged(object sender, EventArgs e)
             {
-                ReconcileMessageTree();
+                ApplyFilterAndRebind();
             }
 
-            private void ReconcileMessageTree()
+            private void searchTextBox_KeyDown(object sender, KeyEventArgs e)
             {
-                // Reconcile visible message rows incrementally to avoid collapsing expanded branches.
-                var showAll = showAllMessagesCheckBox.Checked;
+                if (!e.Control || e.KeyCode != Keys.Back)
+                {
+                    return;
+                }
+
+                searchTextBox.Clear();
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+
+            private void fieldList_ItemCheck(object sender, ItemCheckEventArgs e)
+            {
+                if (suppressFieldListEvents || e.Index < 0 || e.Index >= visibleFields.Count)
+                {
+                    return;
+                }
+
+                // Explorer checkboxes are the single source of truth for showing/hiding dashboard tiles.
+                var entry = visibleFields[e.Index];
+                var fieldKey = CreateCurrentStateFieldKey(entry.FieldName);
+                var isChecked = e.NewValue == CheckState.Checked;
+                BeginInvoke((Action) (() => fieldCheckedChanged?.Invoke(fieldKey, isChecked)));
+            }
+
+            private void fieldList_KeyDown(object sender, KeyEventArgs e)
+            {
+                if (e.Control && e.KeyCode == Keys.Back)
+                {
+                    searchTextBox.Focus();
+                    searchTextBox.Clear();
+                    e.Handled = true;
+                    e.SuppressKeyPress = true;
+                    return;
+                }
+
+                if (e.KeyCode == Keys.Back)
+                {
+                    ForwardBackspaceToSearch(e);
+                    return;
+                }
+
+                var character = TryGetSearchCharacter(e);
+                if (character == '\0')
+                {
+                    return;
+                }
+
+                // Typing in the list always routes to search instead of toggling checked state.
+                ForwardCharacterToSearch(character, e);
+            }
+
+            private void ForwardBackspaceToSearch(KeyEventArgs e)
+            {
+                searchTextBox.Focus();
+
+                if (searchTextBox.TextLength > 0)
+                {
+                    searchTextBox.Text = searchTextBox.Text.Substring(0, searchTextBox.TextLength - 1);
+                }
+
+                searchTextBox.SelectionStart = searchTextBox.TextLength;
+                searchTextBox.SelectionLength = 0;
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+
+            private void ForwardCharacterToSearch(char character, KeyEventArgs e)
+            {
+                searchTextBox.Focus();
+                searchTextBox.Text = (searchTextBox.Text ?? string.Empty) + character;
+                searchTextBox.SelectionStart = searchTextBox.TextLength;
+                searchTextBox.SelectionLength = 0;
+                e.Handled = true;
+                e.SuppressKeyPress = true;
+            }
+
+            private static char TryGetSearchCharacter(KeyEventArgs e)
+            {
+                if (e.KeyCode >= Keys.A && e.KeyCode <= Keys.Z)
+                {
+                    var c = (char) ('A' + (e.KeyCode - Keys.A));
+                    return e.Shift ? c : char.ToLowerInvariant(c);
+                }
+
+                if (e.KeyCode >= Keys.D0 && e.KeyCode <= Keys.D9 && !e.Shift)
+                {
+                    return (char) ('0' + (e.KeyCode - Keys.D0));
+                }
+
+                if (e.KeyCode >= Keys.NumPad0 && e.KeyCode <= Keys.NumPad9)
+                {
+                    return (char) ('0' + (e.KeyCode - Keys.NumPad0));
+                }
+
+                if (e.KeyCode == Keys.Space)
+                {
+                    return ' ';
+                }
+
+                return '\0';
+            }
+
+            private void BuildFieldCatalog(CurrentState currentState)
+            {
+                allFields.Clear();
+
+                foreach (var property in typeof(CurrentState).GetProperties(BindingFlags.Instance | BindingFlags.Public))
+                {
+                    if (property.GetIndexParameters().Length > 0)
+                    {
+                        continue;
+                    }
+
+                    var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+                    if (!IsNumericPropertyType(propertyType) && propertyType != typeof(bool))
+                    {
+                        continue;
+                    }
+
+                    var displayName = currentState != null ? currentState.GetFieldDesc(property.Name) : property.Name;
+                    if (string.IsNullOrWhiteSpace(displayName))
+                    {
+                        displayName = property.Name;
+                    }
+
+                    allFields.Add(new FieldEntry
+                    {
+                        FieldName = property.Name,
+                        DisplayName = displayName
+                    });
+                }
+
+                allFields.Sort((left, right) => CurrentState.StringCompareTo(left.DisplayName, right.DisplayName));
+                lastCustomFieldNameCount = GetCustomFieldNameCount();
+                hasCurrentStateDisplayNames = currentState != null;
+            }
+
+            private void ApplyFilterAndRebind()
+            {
                 var query = (searchTextBox.Text ?? string.Empty).Trim();
-                var hasQuery = query.Length > 0;
-                var desiredMessageIds = new List<uint>();
-                var desiredMessageSet = new HashSet<uint>();
 
-                foreach (var messageId in allDialectMessageIds)
+                visibleFields.Clear();
+                foreach (var entry in allFields)
                 {
-                    var isReceived = currentlyReceivedMessageIds.Contains(messageId);
-                    if (!showAll && !isReceived)
+                    if (!string.IsNullOrWhiteSpace(query) &&
+                        entry.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
+                        entry.FieldName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
                     {
                         continue;
                     }
 
-                    var messageName = ResolveMessageName(messageId);
-                    if (hasQuery && messageName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
-                    {
-                        continue;
-                    }
-
-                    desiredMessageIds.Add(messageId);
-                    desiredMessageSet.Add(messageId);
+                    visibleFields.Add(entry);
                 }
 
-                treeView.BeginUpdate();
-                RemoveStatusNode();
-
-                var messageIdsToRemove = new List<uint>();
-                foreach (var pair in visibleMessageNodes)
-                {
-                    if (!desiredMessageSet.Contains(pair.Key))
-                    {
-                        treeView.Nodes.Remove(pair.Value);
-                        messageIdsToRemove.Add(pair.Key);
-                    }
-                }
-
-                foreach (var messageId in messageIdsToRemove)
-                {
-                    visibleMessageNodes.Remove(messageId);
-                }
-
-                foreach (var messageId in desiredMessageIds)
-                {
-                    var isReceived = currentlyReceivedMessageIds.Contains(messageId);
-                    var node = GetOrCreateVisibleMessageNode(messageId);
-                    ApplyMessageNodeColor(node, showAll, isReceived);
-                }
-
-                if (visibleMessageNodes.Count == 0)
-                {
-                    treeView.Nodes.Add(new TreeNode(showAll || hasQuery
-                        ? "No messages match current filters."
-                        : "Waiting for MAVLink messages...")
-                    {
-                        Tag = new StatusNodeTag()
-                    });
-                }
-
-                treeView.EndUpdate();
-            }
-
-            private TreeNode GetOrCreateVisibleMessageNode(uint messageId)
-            {
-                if (visibleMessageNodes.TryGetValue(messageId, out var existingNode))
-                {
-                    return existingNode;
-                }
-
-                var createdNode = new TreeNode(ResolveMessageName(messageId))
-                {
-                    Name = "msg_" + messageId,
-                    Tag = messageId
-                };
-
-                if (GetMessageFields(messageId).Length > 0)
-                {
-                    // Add a lightweight child so message rows show an expander before lazy field population.
-                    createdNode.Nodes.Add(new TreeNode { Tag = new PlaceholderNodeTag() });
-                }
-
-                var insertIndex = GetInsertIndex(messageId);
-                treeView.Nodes.Insert(insertIndex, createdNode);
-                visibleMessageNodes[messageId] = createdNode;
-                return createdNode;
-            }
-
-            private int GetInsertIndex(uint messageId)
-            {
-                var index = 0;
-                foreach (TreeNode node in treeView.Nodes)
-                {
-                    if (node.Tag is uint existingMessageId && existingMessageId > messageId)
-                    {
-                        break;
-                    }
-
-                    index++;
-                }
-
-                return index;
-            }
-
-            private void RemoveStatusNode()
-            {
-                TreeNode statusNode = null;
-                foreach (TreeNode node in treeView.Nodes)
-                {
-                    if (node.Tag is StatusNodeTag)
-                    {
-                        statusNode = node;
-                        break;
-                    }
-                }
-
-                if (statusNode != null)
-                {
-                    treeView.Nodes.Remove(statusNode);
-                }
-            }
-
-            private void ApplyMessageNodeColor(TreeNode node, bool showAll, bool isReceived)
-            {
-                node.ForeColor = (showAll && !isReceived)
-                    ? SystemColors.GrayText
-                    : treeView.ForeColor;
-            }
-
-            public void UpdateFieldPreviewValues(MAVState mavState)
-            {
-                if (mavState == null || !treeView.Visible)
-                {
-                    return;
-                }
-
-                CaptureLatestBatteryPayloads(mavState);
-
-                // Only expanded + visible branches are refreshed to keep UI work bounded.
-                foreach (TreeNode messageNode in treeView.Nodes)
-                {
-                    if (!(messageNode.Tag is uint messageId) || !messageNode.IsExpanded || !IsNodeVisible(messageNode))
-                    {
-                        continue;
-                    }
-
-                    if (messageId == BatteryStatusMessageId)
-                    {
-                        EnsureBatteryInstanceNodes(messageNode);
-                        foreach (TreeNode instanceNode in messageNode.Nodes)
-                        {
-                            if (!(instanceNode.Tag is InstanceNodeTag instanceTag) || !instanceNode.IsExpanded || !IsNodeVisible(instanceNode))
-                            {
-                                continue;
-                            }
-
-                            latestBatteryPayloadById.TryGetValue(instanceTag.InstanceId, out var batteryPacketData);
-                            UpdateFieldPreviewForNode(instanceNode, messageId, instanceTag.InstanceId, batteryPacketData);
-                        }
-
-                        continue;
-                    }
-
-                    var packet = mavState.getPacketLast(messageId);
-                    UpdateFieldPreviewForNode(messageNode, messageId, null, packet?.data);
-                }
-            }
-
-            private void UpdateFieldPreviewForNode(TreeNode parentNode, uint messageId, int? instanceId, object packetData)
-            {
-                EnsureFieldNodes(parentNode, messageId, instanceId);
-
-                foreach (TreeNode fieldNode in parentNode.Nodes)
-                {
-                    if (!(fieldNode.Tag is FieldNodeTag fieldTag) || !IsNodeVisible(fieldNode))
-                    {
-                        continue;
-                    }
-
-                    var previewValue = "--";
-                    if (packetData != null)
-                    {
-                        previewValue = FormatFieldPreviewValue(fieldTag.FieldInfo.GetValue(packetData));
-                    }
-
-                    if (string.Equals(fieldTag.LastPreviewText, previewValue, StringComparison.Ordinal))
-                    {
-                        continue;
-                    }
-
-                    fieldTag.LastPreviewText = previewValue;
-                    fieldNode.Text = fieldTag.FieldName + " = " + previewValue;
-                }
-            }
-
-            private void CaptureLatestBatteryPayloads(MAVState mavState)
-            {
-                // Cache the latest BATTERY_STATUS payload for battery id 0 and 1 only.
-                if (!currentlyReceivedMessageIds.Contains(BatteryStatusMessageId))
-                {
-                    return;
-                }
-
-                var packet = mavState.getPacketLast(BatteryStatusMessageId);
-                var packetData = packet?.data;
-                if (packetData == null)
-                {
-                    return;
-                }
-
-                if (TryGetBatteryInstanceId(packetData, out var batteryId))
-                {
-                    latestBatteryPayloadById[batteryId] = packetData;
-                }
-            }
-
-            private static string ResolveMessageName(uint messageId)
-            {
-                return Enum.IsDefined(typeof(MAVLink.MAVLINK_MSG_ID), (int) messageId)
-                    ? ((MAVLink.MAVLINK_MSG_ID) messageId).ToString()
-                    : "UNKNOWN";
-            }
-
-            private void treeView_BeforeExpand(object sender, TreeViewCancelEventArgs e)
-            {
-                if (e.Node?.Tag is uint messageId)
-                {
-                    if (messageId == BatteryStatusMessageId)
-                    {
-                        // BATTERY_STATUS expands to Battery 1 / Battery 2 nodes.
-                        EnsureBatteryInstanceNodes(e.Node);
-                    }
-                    else
-                    {
-                        // Single-instance messages expand directly to fields.
-                        EnsureFieldNodes(e.Node, messageId, null);
-                    }
-
-                    return;
-                }
-
-                if (!(e.Node?.Tag is InstanceNodeTag instanceTag))
-                {
-                    return;
-                }
-
-                EnsureFieldNodes(e.Node, instanceTag.MessageId, instanceTag.InstanceId);
-            }
-
-            private void EnsureBatteryInstanceNodes(TreeNode messageNode)
-            {
-                if (messageNode == null)
-                {
-                    return;
-                }
-
-                // Keep battery instance rows stable while enforcing exactly Battery 1 (id 0) and Battery 2 (id 1).
-                var desiredInstanceIds = new[] { 0, 1 };
-                var existingInstanceNodes = new Dictionary<int, TreeNode>();
-                var replaceChildren = false;
-
-                foreach (TreeNode childNode in messageNode.Nodes)
-                {
-                    if (childNode.Tag is PlaceholderNodeTag)
-                    {
-                        continue;
-                    }
-
-                    if (childNode.Tag is InstanceNodeTag instanceTag && instanceTag.MessageId == BatteryStatusMessageId)
-                    {
-                        existingInstanceNodes[instanceTag.InstanceId] = childNode;
-                        continue;
-                    }
-
-                    replaceChildren = true;
-                    break;
-                }
-
-                if (replaceChildren || (messageNode.Nodes.Count == 1 && messageNode.Nodes[0].Tag is PlaceholderNodeTag))
-                {
-                    messageNode.Nodes.Clear();
-                    existingInstanceNodes.Clear();
-                }
-
-                var desiredInstanceSet = new HashSet<int>(desiredInstanceIds);
-                var instanceIdsToRemove = new List<int>();
-                foreach (var pair in existingInstanceNodes)
-                {
-                    if (desiredInstanceSet.Contains(pair.Key))
-                    {
-                        continue;
-                    }
-
-                    messageNode.Nodes.Remove(pair.Value);
-                    instanceIdsToRemove.Add(pair.Key);
-                }
-
-                foreach (var instanceId in instanceIdsToRemove)
-                {
-                    existingInstanceNodes.Remove(instanceId);
-                }
-
-                for (var index = 0; index < desiredInstanceIds.Length; index++)
-                {
-                    var instanceId = desiredInstanceIds[index];
-                    if (!existingInstanceNodes.TryGetValue(instanceId, out var instanceNode))
-                    {
-                        instanceNode = new TreeNode(BuildBatteryInstanceLabel(instanceId))
-                        {
-                            Tag = new InstanceNodeTag
-                            {
-                                MessageId = BatteryStatusMessageId,
-                                InstanceId = instanceId
-                            }
-                        };
-
-                        if (GetMessageFields(BatteryStatusMessageId).Length > 0)
-                        {
-                            instanceNode.Nodes.Add(new TreeNode { Tag = new PlaceholderNodeTag() });
-                        }
-
-                        messageNode.Nodes.Insert(index, instanceNode);
-                        existingInstanceNodes[instanceId] = instanceNode;
-                        continue;
-                    }
-
-                    instanceNode.Text = BuildBatteryInstanceLabel(instanceId);
-                    var currentIndex = messageNode.Nodes.IndexOf(instanceNode);
-                    if (currentIndex != index)
-                    {
-                        messageNode.Nodes.Remove(instanceNode);
-                        messageNode.Nodes.Insert(index, instanceNode);
-                    }
-                }
-            }
-
-            private void EnsureFieldNodes(TreeNode parentNode, uint messageId, int? instanceId)
-            {
-                if (parentNode == null)
-                {
-                    return;
-                }
-
-                if (parentNode.Nodes.Count > 0)
-                {
-                    var firstTag = parentNode.Nodes[0].Tag;
-                    if (firstTag is FieldNodeTag firstFieldTag &&
-                        firstFieldTag.MessageId == messageId &&
-                        firstFieldTag.InstanceId == instanceId)
-                    {
-                        return;
-                    }
-
-                    if (!(firstTag is PlaceholderNodeTag))
-                    {
-                        parentNode.Nodes.Clear();
-                    }
-                    else
-                    {
-                        parentNode.Nodes.Clear();
-                    }
-                }
-
-                foreach (var fieldInfo in GetMessageFields(messageId))
-                {
-                    var fieldName = fieldInfo.Name;
-                    parentNode.Nodes.Add(new TreeNode(fieldName + " = --")
-                    {
-                        Tag = new FieldNodeTag
-                        {
-                            MessageId = messageId,
-                            InstanceId = instanceId,
-                            FieldInfo = fieldInfo,
-                            FieldName = fieldName,
-                            LastPreviewText = "--"
-                        }
-                    });
-                }
-            }
-
-            private bool TryGetBatteryInstanceId(object packetData, out int batteryId)
-            {
-                batteryId = 0;
-                if (packetData == null)
-                {
-                    return false;
-                }
-
-                var packetType = packetData.GetType();
-                var instanceField = packetType.GetField("id", BindingFlags.Instance | BindingFlags.Public);
-                if (instanceField == null)
-                {
-                    return false;
-                }
-
-                if (!TryConvertInstanceValue(instanceField.GetValue(packetData), out batteryId))
-                {
-                    return false;
-                }
-
-                return batteryId == 0 || batteryId == 1;
-            }
-
-            private static bool TryConvertInstanceValue(object value, out int result)
-            {
-                result = 0;
-                if (value == null)
-                {
-                    return false;
-                }
-
+                suppressFieldListEvents = true;
                 try
                 {
-                    result = Convert.ToInt32(value, CultureInfo.InvariantCulture);
-                    return true;
+                    fieldList.BeginUpdate();
+                    fieldList.Items.Clear();
+
+                    foreach (var entry in visibleFields)
+                    {
+                        fieldList.Items.Add(entry);
+                    }
+
+                    fieldList.ClearSelected();
+                    fieldList.EndUpdate();
+                    RefreshFieldSelectionState();
+                }
+                finally
+                {
+                    suppressFieldListEvents = false;
+                }
+            }
+
+            private static int GetCustomFieldNameCount()
+            {
+                try
+                {
+                    return CurrentState.custom_field_names?.Count ?? 0;
                 }
                 catch
                 {
-                    return false;
+                    return 0;
                 }
             }
 
-            private static string BuildBatteryInstanceLabel(int instanceId)
+            private static FieldKey CreateCurrentStateFieldKey(string fieldName)
             {
-                return "Battery " + (instanceId + 1).ToString(CultureInfo.InvariantCulture);
+                // CURRENT_STATE is the canonical namespace for dashboard fields sourced from CurrentState.
+                return new FieldKey
+                {
+                    Message = CurrentStateMessageName,
+                    Field = fieldName,
+                    InstanceId = null
+                };
             }
 
-            private FieldInfo[] GetMessageFields(uint messageId)
+            private static bool IsNumericPropertyType(Type propertyType)
             {
-                if (messageFieldsById.TryGetValue(messageId, out var cachedFields))
+                switch (Type.GetTypeCode(propertyType))
                 {
-                    return cachedFields;
+                    case TypeCode.Byte:
+                    case TypeCode.SByte:
+                    case TypeCode.UInt16:
+                    case TypeCode.UInt32:
+                    case TypeCode.UInt64:
+                    case TypeCode.Int16:
+                    case TypeCode.Int32:
+                    case TypeCode.Int64:
+                    case TypeCode.Decimal:
+                    case TypeCode.Double:
+                    case TypeCode.Single:
+                        return true;
+                    default:
+                        return false;
                 }
-
-                var type = MAVLink.MAVLINK_MESSAGE_INFOS.GetMessageInfo(messageId).type;
-                if (type == null)
-                {
-                    cachedFields = Array.Empty<FieldInfo>();
-                }
-                else
-                {
-                    cachedFields = type.GetFields(BindingFlags.Instance | BindingFlags.Public);
-                    Array.Sort(cachedFields, (left, right) => left.MetadataToken.CompareTo(right.MetadataToken));
-                }
-
-                messageFieldsById[messageId] = cachedFields;
-                return cachedFields;
-            }
-
-            private bool IsNodeVisible(TreeNode node)
-            {
-                var bounds = node.Bounds;
-                return bounds.Width > 0 && bounds.Height > 0 && treeView.ClientRectangle.IntersectsWith(bounds);
-            }
-
-            private static string FormatFieldPreviewValue(object value)
-            {
-                if (value == null)
-                {
-                    return "--";
-                }
-
-                if (value is byte[] bytes)
-                {
-                    var text = System.Text.Encoding.ASCII.GetString(bytes).Trim('\0', ' ');
-                    return string.IsNullOrEmpty(text) ? "[" + bytes.Length.ToString(CultureInfo.InvariantCulture) + "]" : text;
-                }
-
-                if (value is Array array)
-                {
-                    return "[" + array.Length.ToString(CultureInfo.InvariantCulture) + "]";
-                }
-
-                if (value is IFormattable formattable)
-                {
-                    return formattable.ToString(null, CultureInfo.InvariantCulture);
-                }
-
-                return value.ToString() ?? "--";
             }
         }
 

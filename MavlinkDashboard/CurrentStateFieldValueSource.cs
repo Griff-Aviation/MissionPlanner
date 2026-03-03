@@ -1,5 +1,7 @@
 using System;
 using System.Collections.Generic;
+using System.Globalization;
+using System.Reflection;
 
 namespace MissionPlanner.MavlinkDashboard
 {
@@ -193,6 +195,90 @@ namespace MissionPlanner.MavlinkDashboard
                         formattedValue = rssiValue.ToString("0");
                         units = "raw";
                     }
+                    return true;
+                default:
+                    return TryReadGenericCurrentStateField(currentState, field, out label, out formattedValue, out units);
+            }
+        }
+
+        private static bool TryReadGenericCurrentStateField(CurrentState currentState, string field, out string label, out string formattedValue, out string units)
+        {
+            label = GetLabel(field);
+            formattedValue = "-";
+            units = string.Empty;
+
+            if (currentState == null || string.IsNullOrWhiteSpace(field))
+            {
+                return false;
+            }
+
+            // Match QuickView "Display This": bind directly to CurrentState properties.
+            var property = typeof(CurrentState).GetProperty(field, BindingFlags.Instance | BindingFlags.Public | BindingFlags.IgnoreCase);
+            if (property == null || property.GetIndexParameters().Length > 0)
+            {
+                return false;
+            }
+
+            var propertyType = Nullable.GetUnderlyingType(property.PropertyType) ?? property.PropertyType;
+            if (propertyType != typeof(bool) && !IsNumericType(propertyType))
+            {
+                return false;
+            }
+
+            object rawValue;
+            try
+            {
+                rawValue = property.GetValue(currentState, null);
+            }
+            catch
+            {
+                return false;
+            }
+
+            if (rawValue == null)
+            {
+                return false;
+            }
+
+            label = currentState.GetFieldDesc(property.Name);
+            if (string.IsNullOrWhiteSpace(label))
+            {
+                label = property.Name;
+            }
+
+            if (rawValue is bool boolValue)
+            {
+                formattedValue = boolValue ? "1" : "0";
+                return true;
+            }
+
+            if (rawValue is IFormattable formattable)
+            {
+                formattedValue = formattable.ToString(null, CultureInfo.InvariantCulture);
+            }
+            else
+            {
+                formattedValue = rawValue.ToString() ?? "-";
+            }
+
+            return true;
+        }
+
+        private static bool IsNumericType(Type type)
+        {
+            switch (Type.GetTypeCode(type))
+            {
+                case TypeCode.Byte:
+                case TypeCode.SByte:
+                case TypeCode.UInt16:
+                case TypeCode.UInt32:
+                case TypeCode.UInt64:
+                case TypeCode.Int16:
+                case TypeCode.Int32:
+                case TypeCode.Int64:
+                case TypeCode.Decimal:
+                case TypeCode.Double:
+                case TypeCode.Single:
                     return true;
                 default:
                     return false;
