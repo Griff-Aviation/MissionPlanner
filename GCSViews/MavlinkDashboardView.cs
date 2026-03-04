@@ -23,14 +23,22 @@ namespace MissionPlanner.GCSViews
         private readonly ContextMenuStrip tileContextMenu = new ContextMenuStrip();
         private readonly ToolStripMenuItem configureTileMenuItem = new ToolStripMenuItem("Configure...");
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
+        private readonly TextBox disconnectStatusTextBox = new TextBox();
         private static readonly string[] ThresholdOperators = { ">", "<", "==", "!=" };
         private readonly Button buttonExplorer = new Button();
+        private const int DisconnectBorderThickness = 5;
+        private const int DisconnectBorderInset = 5;
+        private static readonly TimeSpan DisconnectBorderThreshold = TimeSpan.FromSeconds(5);
+        private static readonly Color DisconnectBorderColor = Color.FromArgb(220, 64, 64);
+        private static readonly Color DisconnectStatusTextColor = Color.Red;
         private ExplorerWindowForm explorerWindow;
         private DashboardConfig dashboardConfig;
         private TelemetryTileControl draggingTile;
         private Point dragStartPointScreen;
         private TelemetryTileControl contextMenuTargetTile;
         private TelemetryTileControl currentDropTargetTile;
+        private bool hasSeenAircraftConnection;
+        private bool showDisconnectBorder;
 
         public MavlinkDashboardView()
         {
@@ -38,12 +46,14 @@ namespace MissionPlanner.GCSViews
             InitializeSaveFavoriteButton();
             InitializeApplyFavoriteButton();
             InitializeExplorerButton();
+            InitializeDisconnectStatusTextBox();
             InitializeTileContextMenu();
             InitializeEditModeSupport();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             SetPoppedOutState(false);
             LoadDashboardConfig();
             RefreshTiles();
+            UpdateDisconnectBorderState();
             Disposed += MavlinkDashboardView_Disposed;
         }
 
@@ -69,12 +79,69 @@ namespace MissionPlanner.GCSViews
             // Keep tile values current from the live telemetry source.
             RefreshTiles();
             RefreshExplorerMessageList();
+            UpdateDisconnectBorderState();
         }
 
         public void SetPoppedOutState(bool poppedOut)
         {
             isPoppedOut = poppedOut;
             buttonPopOut.Text = poppedOut ? "Pop In" : "Pop Out";
+        }
+
+        private void UpdateDisconnectBorderState()
+        {
+            bool isConnectedNow;
+            try
+            {
+                isConnectedNow = IsAircraftTelemetryConnected();
+            }
+            catch
+            {
+                // Border logic must never interfere with connection or UI update flow.
+                isConnectedNow = false;
+            }
+
+            if (isConnectedNow)
+            {
+                hasSeenAircraftConnection = true;
+            }
+
+            // Only raise the red border after a real connected->disconnected transition.
+            var shouldShowBorder = hasSeenAircraftConnection && !isConnectedNow;
+            if (showDisconnectBorder == shouldShowBorder)
+            {
+                return;
+            }
+
+            showDisconnectBorder = shouldShowBorder;
+            disconnectStatusTextBox.Visible = showDisconnectBorder;
+            disconnectStatusTextBox.BringToFront();
+            flowLayoutPanelTiles.Invalidate();
+        }
+
+        private static bool IsAircraftTelemetryConnected()
+        {
+            var sampleTime = MainV2.comPort?.MAV?.cs?.datetime ?? DateTime.MinValue;
+            if (sampleTime <= DateTime.MinValue.AddSeconds(1))
+            {
+                return false;
+            }
+
+            DateTime sampleTimeUtc;
+            if (sampleTime.Kind == DateTimeKind.Utc)
+            {
+                sampleTimeUtc = sampleTime;
+            }
+            else if (sampleTime.Kind == DateTimeKind.Local)
+            {
+                sampleTimeUtc = sampleTime.ToUniversalTime();
+            }
+            else
+            {
+                sampleTimeUtc = DateTime.SpecifyKind(sampleTime, DateTimeKind.Local).ToUniversalTime();
+            }
+
+            return (DateTime.UtcNow - sampleTimeUtc) < DisconnectBorderThreshold;
         }
 
         private void RefreshTiles()
@@ -233,6 +300,37 @@ namespace MissionPlanner.GCSViews
             panelTop.Controls.Add(buttonExplorer);
         }
 
+        private void InitializeDisconnectStatusTextBox()
+        {
+            disconnectStatusTextBox.Name = "disconnectStatusTextBox";
+            disconnectStatusTextBox.ReadOnly = true;
+            disconnectStatusTextBox.TabStop = false;
+            disconnectStatusTextBox.BorderStyle = BorderStyle.FixedSingle;
+            disconnectStatusTextBox.TextAlign = HorizontalAlignment.Center;
+            disconnectStatusTextBox.Font = new Font(Font.FontFamily, 12F, FontStyle.Bold, GraphicsUnit.Point);
+            disconnectStatusTextBox.Text = "DISCONNECTED FROM AIRCRAFT";
+            disconnectStatusTextBox.Width = 340;
+            disconnectStatusTextBox.Height = 26;
+            disconnectStatusTextBox.Visible = false;
+            disconnectStatusTextBox.ForeColor = DisconnectStatusTextColor;
+            disconnectStatusTextBox.BackColor = MissionPlanner.Utilities.ThemeManager.ControlBGColor;
+
+            panelTop.Controls.Add(disconnectStatusTextBox);
+            panelTop.Resize += panelTop_Resize;
+            PositionDisconnectStatusTextBox();
+        }
+
+        private void panelTop_Resize(object sender, EventArgs e)
+        {
+            PositionDisconnectStatusTextBox();
+        }
+
+        private void PositionDisconnectStatusTextBox()
+        {
+            var x = (panelTop.ClientSize.Width - disconnectStatusTextBox.Width) / 2;
+            disconnectStatusTextBox.Location = new Point(Math.Max(0, x), 5);
+        }
+
         private void InitializeTileContextMenu()
         {
             configureTileMenuItem.Name = "configureTileMenuItem";
@@ -248,11 +346,41 @@ namespace MissionPlanner.GCSViews
         {
             // Reordering works through the panel-level drag/drop surface.
             flowLayoutPanelTiles.AllowDrop = true;
+            flowLayoutPanelTiles.Paint += flowLayoutPanelTiles_Paint;
             flowLayoutPanelTiles.MouseDown += flowLayoutPanelTiles_MouseDown;
             flowLayoutPanelTiles.DragEnter += flowLayoutPanelTiles_DragEnter;
             flowLayoutPanelTiles.DragOver += flowLayoutPanelTiles_DragOver;
             flowLayoutPanelTiles.DragLeave += flowLayoutPanelTiles_DragLeave;
             flowLayoutPanelTiles.DragDrop += flowLayoutPanelTiles_DragDrop;
+        }
+
+        private void flowLayoutPanelTiles_Paint(object sender, PaintEventArgs e)
+        {
+            if (!showDisconnectBorder)
+            {
+                return;
+            }
+
+            var borderBounds = flowLayoutPanelTiles.ClientRectangle;
+            if (borderBounds.Width <= 0 || borderBounds.Height <= 0)
+            {
+                return;
+            }
+
+            borderBounds.Inflate(-DisconnectBorderInset, -DisconnectBorderInset);
+            if (borderBounds.Width <= 0 || borderBounds.Height <= 0)
+            {
+                return;
+            }
+
+            borderBounds.Width -= 1;
+            borderBounds.Height -= 1;
+
+            using (var pen = new Pen(DisconnectBorderColor, DisconnectBorderThickness))
+            {
+                pen.Alignment = System.Drawing.Drawing2D.PenAlignment.Inset;
+                e.Graphics.DrawRectangle(pen, borderBounds);
+            }
         }
 
         private void ShowExplorerWindow()
