@@ -309,11 +309,11 @@ namespace MissionPlanner.GCSViews
             disconnectStatusTextBox.TextAlign = HorizontalAlignment.Center;
             disconnectStatusTextBox.Font = new Font(Font.FontFamily, 12F, FontStyle.Bold, GraphicsUnit.Point);
             disconnectStatusTextBox.Text = "DISCONNECTED FROM AIRCRAFT";
-            disconnectStatusTextBox.Width = 340;
             disconnectStatusTextBox.Height = 26;
             disconnectStatusTextBox.Visible = false;
             disconnectStatusTextBox.ForeColor = DisconnectStatusTextColor;
             disconnectStatusTextBox.BackColor = MissionPlanner.Utilities.ThemeManager.ControlBGColor;
+            SizeDisconnectStatusTextBoxToText();
 
             panelTop.Controls.Add(disconnectStatusTextBox);
             panelTop.Resize += panelTop_Resize;
@@ -329,6 +329,12 @@ namespace MissionPlanner.GCSViews
         {
             var x = (panelTop.ClientSize.Width - disconnectStatusTextBox.Width) / 2;
             disconnectStatusTextBox.Location = new Point(Math.Max(0, x), 5);
+        }
+
+        private void SizeDisconnectStatusTextBoxToText()
+        {
+            var measured = TextRenderer.MeasureText(disconnectStatusTextBox.Text ?? string.Empty, disconnectStatusTextBox.Font);
+            disconnectStatusTextBox.Width = Math.Max(220, measured.Width + 24);
         }
 
         private void InitializeTileContextMenu()
@@ -1576,6 +1582,7 @@ namespace MissionPlanner.GCSViews
             }
 
             private readonly Label searchLabel = new Label();
+            private readonly Label searchExampleLabel = new Label();
             private readonly TextBox searchTextBox = new TextBox();
             private readonly CheckBox showAllFieldTypesCheckBox = new CheckBox();
             private readonly CheckedListBox fieldList = new CheckedListBox();
@@ -1612,12 +1619,29 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Top,
                     Height = 66
                 };
+                var searchHeaderRow = new TableLayoutPanel
+                {
+                    Dock = DockStyle.Top,
+                    Height = 16,
+                    ColumnCount = 2,
+                    RowCount = 1,
+                    Margin = Padding.Empty,
+                    Padding = Padding.Empty
+                };
+                searchHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));
+                searchHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                searchHeaderRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
                 searchLabel.Name = "explorerSearchLabel";
                 searchLabel.Text = "Search";
-                searchLabel.Dock = DockStyle.Top;
-                searchLabel.Height = 16;
+                searchLabel.Dock = DockStyle.Fill;
                 searchLabel.TextAlign = ContentAlignment.BottomLeft;
+
+                searchExampleLabel.Name = "explorerSearchExampleLabel";
+                searchExampleLabel.Text = "* wildcard, e.g. esc*_temp";
+                searchExampleLabel.Dock = DockStyle.Fill;
+                searchExampleLabel.Font = new Font(Font.FontFamily, 7F, FontStyle.Regular, GraphicsUnit.Point);
+                searchExampleLabel.TextAlign = ContentAlignment.BottomRight;
 
                 searchTextBox.Name = "explorerSearchTextBox";
                 searchTextBox.Dock = DockStyle.Top;
@@ -1643,9 +1667,11 @@ namespace MissionPlanner.GCSViews
                 BuildFieldCatalog(MainV2.comPort?.MAV?.cs);
                 ApplyFilterAndRebind();
 
+                searchHeaderRow.Controls.Add(searchLabel, 0, 0);
+                searchHeaderRow.Controls.Add(searchExampleLabel, 1, 0);
                 headerPanel.Controls.Add(showAllFieldTypesCheckBox);
                 headerPanel.Controls.Add(searchTextBox);
-                headerPanel.Controls.Add(searchLabel);
+                headerPanel.Controls.Add(searchHeaderRow);
                 rootPanel.Controls.Add(fieldList);
                 rootPanel.Controls.Add(headerPanel);
                 Controls.Add(rootPanel);
@@ -1854,10 +1880,9 @@ namespace MissionPlanner.GCSViews
                 foreach (var entry in allFields)
                 {
                     if (!string.IsNullOrWhiteSpace(query) &&
-                        entry.DisplayName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
-                        entry.FieldName.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0 &&
-                        (entry.OverrideLabel == null ||
-                         entry.OverrideLabel.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0))
+                        !MatchesSearchQuery(entry.DisplayName, query) &&
+                        !MatchesSearchQuery(entry.FieldName, query) &&
+                        !MatchesSearchQuery(entry.OverrideLabel, query))
                     {
                         continue;
                     }
@@ -1884,6 +1909,46 @@ namespace MissionPlanner.GCSViews
                 {
                     suppressFieldListEvents = false;
                 }
+            }
+
+            private static bool MatchesSearchQuery(string candidate, string query)
+            {
+                if (string.IsNullOrWhiteSpace(query))
+                {
+                    return true;
+                }
+
+                if (string.IsNullOrEmpty(candidate))
+                {
+                    return false;
+                }
+
+                if (query.IndexOf('*') < 0)
+                {
+                    return candidate.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0;
+                }
+
+                // Wildcard search uses ordered segment matching so "battery*1" matches any text containing
+                // "battery" followed by "1" with any characters between them.
+                var segments = query.Split(new[] { '*' }, StringSplitOptions.RemoveEmptyEntries);
+                if (segments.Length == 0)
+                {
+                    return true;
+                }
+
+                var searchStart = 0;
+                foreach (var segment in segments)
+                {
+                    var segmentIndex = candidate.IndexOf(segment, searchStart, StringComparison.OrdinalIgnoreCase);
+                    if (segmentIndex < 0)
+                    {
+                        return false;
+                    }
+
+                    searchStart = segmentIndex + segment.Length;
+                }
+
+                return true;
             }
 
             private void UpdateOverrideLabelsForAllFields()
