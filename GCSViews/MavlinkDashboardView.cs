@@ -1000,7 +1000,7 @@ namespace MissionPlanner.GCSViews
 
                 var textWarning = new TextBox
                 {
-                    Text = config.Thresholds?.Warning?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                    Text = GetThresholdEditorValue(config.Thresholds?.WarningOperator, config.Thresholds?.Warning, config.Thresholds?.WarningText),
                     Anchor = AnchorStyles.Left | AnchorStyles.Right
                 };
                 var comboCriticalOperator = new ComboBox
@@ -1013,7 +1013,7 @@ namespace MissionPlanner.GCSViews
 
                 var textCritical = new TextBox
                 {
-                    Text = config.Thresholds?.Critical?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
+                    Text = GetThresholdEditorValue(config.Thresholds?.CriticalOperator, config.Thresholds?.Critical, config.Thresholds?.CriticalText),
                     Anchor = AnchorStyles.Left | AnchorStyles.Right
                 };
 
@@ -1078,8 +1078,12 @@ namespace MissionPlanner.GCSViews
 
                 Func<bool, bool> applyEditorValuesToConfig = requireValidThresholds =>
                 {
-                    var warningParsed = TryParseNullableDouble(textWarning.Text, out var warningValue);
-                    var criticalParsed = TryParseNullableDouble(textCritical.Text, out var criticalValue);
+                    var warningOperator = ResolveThresholdOperator(comboWarningOperator.SelectedItem as string);
+                    var criticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
+                    var warningText = NormalizeThresholdText(textWarning.Text);
+                    var criticalText = NormalizeThresholdText(textCritical.Text);
+                    var warningParsed = TryParseThresholdValueForOperator(warningOperator, warningText, out var warningValue);
+                    var criticalParsed = TryParseThresholdValueForOperator(criticalOperator, criticalText, out var criticalValue);
                     if (requireValidThresholds && (!warningParsed || !criticalParsed))
                     {
                         return false;
@@ -1093,8 +1097,10 @@ namespace MissionPlanner.GCSViews
                     config.UnitsOverride = string.Equals(unitsOverride, normalizedDefaultUnits, StringComparison.Ordinal) ? null : unitsOverride;
                     config.TextColorName = NormalizeTextColorSelection(comboTextColor.SelectedItem as string);
                     config.DecimalPlaces = checkAutoDecimals.Checked ? (int?)null : (int)inputCustomDecimals.Value;
-                    config.Thresholds.WarningOperator = ResolveThresholdOperator(comboWarningOperator.SelectedItem as string);
-                    config.Thresholds.CriticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
+                    config.Thresholds.WarningOperator = warningOperator;
+                    config.Thresholds.CriticalOperator = criticalOperator;
+                    config.Thresholds.WarningText = IsStringThresholdOperator(warningOperator) ? warningText : null;
+                    config.Thresholds.CriticalText = IsStringThresholdOperator(criticalOperator) ? criticalText : null;
 
                     // Ignore partially typed invalid threshold text during live preview.
                     if (warningParsed)
@@ -1134,8 +1140,8 @@ namespace MissionPlanner.GCSViews
 
                     comboWarningOperator.SelectedItem = ResolveThresholdOperator(source?.Thresholds?.WarningOperator);
                     comboCriticalOperator.SelectedItem = ResolveThresholdOperator(source?.Thresholds?.CriticalOperator);
-                    textWarning.Text = source?.Thresholds?.Warning?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
-                    textCritical.Text = source?.Thresholds?.Critical?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                    textWarning.Text = GetThresholdEditorValue(source?.Thresholds?.WarningOperator, source?.Thresholds?.Warning, source?.Thresholds?.WarningText);
+                    textCritical.Text = GetThresholdEditorValue(source?.Thresholds?.CriticalOperator, source?.Thresholds?.Critical, source?.Thresholds?.CriticalText);
                 };
 
                 EventHandler livePreviewChanged = (s, e) =>
@@ -1165,7 +1171,7 @@ namespace MissionPlanner.GCSViews
                 {
                     if (!applyEditorValuesToConfig(true))
                     {
-                        MessageBox.Show(dialog, "Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
+                        MessageBox.Show(dialog, "For operators > and <, Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
                             MessageBoxButtons.OK, MessageBoxIcon.Warning);
                         return;
                     }
@@ -1202,7 +1208,7 @@ namespace MissionPlanner.GCSViews
                 {
                     CopyTileConfig(originalConfig, config);
                     RefreshTiles();
-                    MessageBox.Show(this, "Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
+                    MessageBox.Show(this, "For operators > and <, Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
@@ -1282,6 +1288,49 @@ namespace MissionPlanner.GCSViews
             }
 
             return ">";
+        }
+
+        private static bool IsStringThresholdOperator(string thresholdOperator)
+        {
+            var op = ResolveThresholdOperator(thresholdOperator);
+            return op == "==" || op == "!=";
+        }
+
+        private static string NormalizeThresholdText(string value)
+        {
+            if (string.IsNullOrWhiteSpace(value))
+            {
+                return null;
+            }
+
+            return value.Trim();
+        }
+
+        private static string GetThresholdEditorValue(string thresholdOperator, double? numericValue, string stringValue)
+        {
+            if (IsStringThresholdOperator(thresholdOperator))
+            {
+                var text = NormalizeThresholdText(stringValue);
+                if (!string.IsNullOrEmpty(text))
+                {
+                    return text;
+                }
+            }
+
+            return numericValue.HasValue
+                ? numericValue.Value.ToString(CultureInfo.InvariantCulture)
+                : string.Empty;
+        }
+
+        private static bool TryParseThresholdValueForOperator(string thresholdOperator, string thresholdText, out double? numericValue)
+        {
+            numericValue = null;
+            if (IsStringThresholdOperator(thresholdOperator))
+            {
+                return true;
+            }
+
+            return TryParseNullableDouble(thresholdText, out numericValue);
         }
 
         private static string ResolveTextColorOption(string configuredColorName)
@@ -1423,7 +1472,7 @@ namespace MissionPlanner.GCSViews
 
         private static Control CreateThresholdEditor(ComboBox operatorSelector, TextBox valueEditor)
         {
-            // Keep operator and numeric threshold value together on one row.
+            // Keep operator and threshold input together on one row.
             var container = new TableLayoutPanel
             {
                 ColumnCount = 2,
@@ -1449,29 +1498,77 @@ namespace MissionPlanner.GCSViews
                 return fieldValue == null ? FieldState.Inactive : fieldValue.State;
             }
 
-            if (thresholds == null || (!thresholds.Warning.HasValue && !thresholds.Critical.HasValue))
+            if (thresholds == null)
             {
                 return fieldValue.State;
             }
 
-            if (!TryParseNumericValue(fieldValue.FormattedValue, out var numericValue))
+            var hasCriticalThreshold = IsThresholdConfigured(thresholds.CriticalOperator, thresholds.Critical, thresholds.CriticalText);
+            var hasWarningThreshold = IsThresholdConfigured(thresholds.WarningOperator, thresholds.Warning, thresholds.WarningText);
+            if (!hasWarningThreshold && !hasCriticalThreshold)
             {
                 return fieldValue.State;
             }
 
             var thresholdState = FieldState.Normal;
-            if (thresholds.Critical.HasValue &&
-                ThresholdCrossed(numericValue, thresholds.Critical.Value, thresholds.CriticalOperator))
+            if (hasCriticalThreshold &&
+                ThresholdCrossed(fieldValue.FormattedValue, thresholds.Critical, thresholds.CriticalText, thresholds.CriticalOperator))
             {
                 thresholdState = FieldState.Critical;
             }
-            else if (thresholds.Warning.HasValue &&
-                     ThresholdCrossed(numericValue, thresholds.Warning.Value, thresholds.WarningOperator))
+            else if (hasWarningThreshold &&
+                     ThresholdCrossed(fieldValue.FormattedValue, thresholds.Warning, thresholds.WarningText, thresholds.WarningOperator))
             {
                 thresholdState = FieldState.Warning;
             }
 
             return MaxState(fieldValue.State, thresholdState);
+        }
+
+        private static bool IsThresholdConfigured(string thresholdOperator, double? numericThreshold, string textThreshold)
+        {
+            if (IsStringThresholdOperator(thresholdOperator))
+            {
+                return !string.IsNullOrWhiteSpace(ResolveStringThresholdValue(textThreshold, numericThreshold));
+            }
+
+            return numericThreshold.HasValue;
+        }
+
+        private static bool ThresholdCrossed(string fieldValue, double? numericThreshold, string textThreshold, string comparisonOperator)
+        {
+            var op = ResolveThresholdOperator(comparisonOperator);
+            if (IsStringThresholdOperator(op))
+            {
+                var compareValue = ResolveStringThresholdValue(textThreshold, numericThreshold);
+                if (string.IsNullOrWhiteSpace(compareValue))
+                {
+                    return false;
+                }
+
+                var equal = string.Equals((fieldValue ?? string.Empty).Trim(), compareValue, StringComparison.OrdinalIgnoreCase);
+                return op == "==" ? equal : !equal;
+            }
+
+            if (!numericThreshold.HasValue || !TryParseNumericValue(fieldValue, out var numericValue))
+            {
+                return false;
+            }
+
+            return ThresholdCrossed(numericValue, numericThreshold.Value, op);
+        }
+
+        private static string ResolveStringThresholdValue(string textThreshold, double? numericThreshold)
+        {
+            var normalized = NormalizeThresholdText(textThreshold);
+            if (!string.IsNullOrEmpty(normalized))
+            {
+                return normalized;
+            }
+
+            return numericThreshold.HasValue
+                ? numericThreshold.Value.ToString(CultureInfo.InvariantCulture)
+                : null;
         }
 
         private static bool ThresholdCrossed(double value, double threshold, string comparisonOperator)
@@ -1480,10 +1577,6 @@ namespace MissionPlanner.GCSViews
             {
                 case "<":
                     return value < threshold;
-                case "==":
-                    return Math.Abs(value - threshold) <= 0.0000001d;
-                case "!=":
-                    return Math.Abs(value - threshold) > 0.0000001d;
                 default:
                     return value > threshold;
             }
@@ -1815,8 +1908,10 @@ namespace MissionPlanner.GCSViews
                 {
                     WarningOperator = source.Thresholds?.WarningOperator,
                     Warning = source.Thresholds?.Warning,
+                    WarningText = source.Thresholds?.WarningText,
                     CriticalOperator = source.Thresholds?.CriticalOperator,
-                    Critical = source.Thresholds?.Critical
+                    Critical = source.Thresholds?.Critical,
+                    CriticalText = source.Thresholds?.CriticalText
                 },
                 TileType = source.TileType
             };
@@ -1840,8 +1935,10 @@ namespace MissionPlanner.GCSViews
             {
                 WarningOperator = source.Thresholds?.WarningOperator,
                 Warning = source.Thresholds?.Warning,
+                WarningText = source.Thresholds?.WarningText,
                 CriticalOperator = source.Thresholds?.CriticalOperator,
-                Critical = source.Thresholds?.Critical
+                Critical = source.Thresholds?.Critical,
+                CriticalText = source.Thresholds?.CriticalText
             };
         }
 

@@ -53,8 +53,10 @@ namespace MissionPlanner.MavlinkDashboard
     {
         public string WarningOperator { get; set; } = ">";
         public double? Warning { get; set; }
+        public string WarningText { get; set; }
         public string CriticalOperator { get; set; } = ">";
         public double? Critical { get; set; }
+        public string CriticalText { get; set; }
     }
 
     public class DashboardLayoutConfig
@@ -165,11 +167,17 @@ namespace MissionPlanner.MavlinkDashboard
                 {
                     tile.Thresholds.WarningOperator = ">";
                 }
+                tile.Thresholds.WarningText = string.IsNullOrWhiteSpace(tile.Thresholds.WarningText)
+                    ? null
+                    : tile.Thresholds.WarningText.Trim();
 
                 if (string.IsNullOrWhiteSpace(tile.Thresholds.CriticalOperator))
                 {
                     tile.Thresholds.CriticalOperator = ">";
                 }
+                tile.Thresholds.CriticalText = string.IsNullOrWhiteSpace(tile.Thresholds.CriticalText)
+                    ? null
+                    : tile.Thresholds.CriticalText.Trim();
 
                 if (string.IsNullOrWhiteSpace(tile.TileType))
                 {
