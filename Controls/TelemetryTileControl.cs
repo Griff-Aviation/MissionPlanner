@@ -113,18 +113,27 @@ namespace MissionPlanner.Controls
             }
         }
 
+        public void SetSelectionVisual(bool selected)
+        {
+            if (isSelected == selected)
+            {
+                return;
+            }
+
+            isSelected = selected;
+            ApplyStateVisual();
+        }
+
         protected override void OnEnter(System.EventArgs e)
         {
             base.OnEnter(e);
-            isSelected = true;
-            ApplyStateVisual();
+            SetSelectionVisual(true);
         }
 
         protected override void OnLeave(System.EventArgs e)
         {
             base.OnLeave(e);
-            isSelected = false;
-            ApplyStateVisual();
+            SetSelectionVisual(false);
         }
 
         private void ApplyStateVisual()
@@ -133,9 +142,23 @@ namespace MissionPlanner.Controls
             labelValue.ForeColor = ThemeManager.TextColor;
 
             var stateForVisual = isSelected ? FieldState.Selected : telemetryState;
-            var semanticColor = GetSemanticColor(stateForVisual);
-            var backgroundColor = Blend(ThemeManager.ControlBGColor, semanticColor, GetTintWeight(stateForVisual));
-            SetStateVisual(backgroundColor, semanticColor);
+            Color backgroundColor;
+            Color borderColor;
+
+            if (stateForVisual == FieldState.DisconnectWarning)
+            {
+                // Disconnect warning is grey fill (inactive) with warning yellow border.
+                backgroundColor = Blend(ThemeManager.ControlBGColor, InactiveColor, GetTintWeight(FieldState.Inactive));
+                borderColor = WarningColor;
+            }
+            else
+            {
+                var semanticColor = GetSemanticColor(stateForVisual);
+                backgroundColor = Blend(ThemeManager.ControlBGColor, semanticColor, GetTintWeight(stateForVisual));
+                borderColor = semanticColor;
+            }
+
+            SetStateVisual(backgroundColor, borderColor);
         }
 
         private static int GetTintWeight(FieldState state)
@@ -143,7 +166,9 @@ namespace MissionPlanner.Controls
             switch (state)
             {
                 case FieldState.Warning:
-                    return 0;
+                    return 22;
+                case FieldState.DisconnectWarning:
+                    return 18;
                 case FieldState.Critical:
                     return 30;
                 case FieldState.Inactive:
@@ -160,6 +185,8 @@ namespace MissionPlanner.Controls
             switch (state)
             {
                 case FieldState.Warning:
+                    return WarningColor;
+                case FieldState.DisconnectWarning:
                     return WarningColor;
                 case FieldState.Critical:
                     return CriticalColor;

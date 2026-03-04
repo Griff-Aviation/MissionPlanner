@@ -248,6 +248,7 @@ namespace MissionPlanner.GCSViews
         {
             // Reordering works through the panel-level drag/drop surface.
             flowLayoutPanelTiles.AllowDrop = true;
+            flowLayoutPanelTiles.MouseDown += flowLayoutPanelTiles_MouseDown;
             flowLayoutPanelTiles.DragEnter += flowLayoutPanelTiles_DragEnter;
             flowLayoutPanelTiles.DragOver += flowLayoutPanelTiles_DragOver;
             flowLayoutPanelTiles.DragLeave += flowLayoutPanelTiles_DragLeave;
@@ -327,6 +328,7 @@ namespace MissionPlanner.GCSViews
             control.ContextMenuStrip = tileContextMenu;
             control.MouseDown += (sender, e) => TileSurface_MouseDown(ownerTile, e);
             control.MouseMove += (sender, e) => TileSurface_MouseMove(ownerTile, e);
+            control.MouseDoubleClick += (sender, e) => TileSurface_MouseDoubleClick(ownerTile, e);
 
             foreach (Control child in control.Controls)
             {
@@ -440,6 +442,20 @@ namespace MissionPlanner.GCSViews
             var targetIndex = target == null ? GetGapInsertionIndex(point) : GetTileIndex(target);
             MoveTile(dragged, targetIndex);
             SaveDashboardConfig();
+        }
+
+        private void flowLayoutPanelTiles_MouseDown(object sender, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            // Clicking tile-free area clears current tile selection highlight.
+            if (GetTileFromControl(flowLayoutPanelTiles.GetChildAtPoint(e.Location)) == null)
+            {
+                ClearTileSelectionVisuals();
+            }
         }
 
         private void UpdateDropTargetHighlight(TelemetryTileControl dragged, Point pointerPointInPanel)
@@ -576,26 +592,7 @@ namespace MissionPlanner.GCSViews
 
         private void configureTileMenuItem_Click(object sender, EventArgs e)
         {
-            if (contextMenuTargetTile == null)
-            {
-                return;
-            }
-
-            var index = GetTileIndex(contextMenuTargetTile);
-            if (index < 0)
-            {
-                return;
-            }
-
-            var config = tiles[index].Config;
-            if (!ShowTileConfigurationDialog(config))
-            {
-                return;
-            }
-
-            RefreshTiles();
-            SaveDashboardConfig();
-            RefreshExplorerFieldSelectionState();
+            ConfigureTile(contextMenuTargetTile);
         }
 
         private int GetTileIndex(TelemetryTileControl tile)
@@ -620,6 +617,48 @@ namespace MissionPlanner.GCSViews
             }
 
             return control as TelemetryTileControl;
+        }
+
+        private void TileSurface_MouseDoubleClick(TelemetryTileControl tile, MouseEventArgs e)
+        {
+            if (e.Button != MouseButtons.Left)
+            {
+                return;
+            }
+
+            ConfigureTile(tile);
+        }
+
+        private void ConfigureTile(TelemetryTileControl tile)
+        {
+            if (tile == null)
+            {
+                return;
+            }
+
+            var index = GetTileIndex(tile);
+            if (index < 0)
+            {
+                return;
+            }
+
+            var config = tiles[index].Config;
+            if (!ShowTileConfigurationDialog(config))
+            {
+                return;
+            }
+
+            RefreshTiles();
+            SaveDashboardConfig();
+            RefreshExplorerFieldSelectionState();
+        }
+
+        private void ClearTileSelectionVisuals()
+        {
+            foreach (var tile in tiles)
+            {
+                tile.Tile.SetSelectionVisual(false);
+            }
         }
 
         private void MavlinkDashboardView_Disposed(object sender, EventArgs e)
@@ -1003,9 +1042,9 @@ namespace MissionPlanner.GCSViews
 
         private static FieldState ApplyThresholdState(FieldValue fieldValue, DashboardThresholdConfig thresholds)
         {
-            if (fieldValue == null || fieldValue.State == FieldState.Inactive)
+            if (fieldValue == null || fieldValue.State == FieldState.Inactive || fieldValue.State == FieldState.DisconnectWarning)
             {
-                return FieldState.Inactive;
+                return fieldValue == null ? FieldState.Inactive : fieldValue.State;
             }
 
             if (thresholds == null || (!thresholds.Warning.HasValue && !thresholds.Critical.HasValue))
@@ -1053,6 +1092,11 @@ namespace MissionPlanner.GCSViews
             if (left == FieldState.Inactive || right == FieldState.Inactive)
             {
                 return FieldState.Inactive;
+            }
+
+            if (left == FieldState.DisconnectWarning || right == FieldState.DisconnectWarning)
+            {
+                return FieldState.DisconnectWarning;
             }
 
             if (left == FieldState.Critical || right == FieldState.Critical)

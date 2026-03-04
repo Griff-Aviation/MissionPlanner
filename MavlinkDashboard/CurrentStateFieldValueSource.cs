@@ -85,7 +85,8 @@ namespace MissionPlanner.MavlinkDashboard
             }
             else if (age >= SoftStaleThreshold)
             {
-                state = FieldState.Warning;
+                // Short telemetry silence is shown as a dedicated disconnect warning state.
+                state = FieldState.DisconnectWarning;
             }
             value = new FieldValue
             {

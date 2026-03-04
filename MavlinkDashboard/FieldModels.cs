@@ -6,6 +6,7 @@ namespace MissionPlanner.MavlinkDashboard
     {
         Normal,
         Warning,
+        DisconnectWarning,
         Critical,
         Inactive,
         Selected
