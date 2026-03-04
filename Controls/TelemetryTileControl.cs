@@ -21,13 +21,14 @@ namespace MissionPlanner.Controls
         private FieldState telemetryState = FieldState.Normal;
         private bool isSelected;
         private bool isDropTarget;
+        private Color? valueTextColorOverride;
 
         public TelemetryTileControl()
         {
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.UserPaint | ControlStyles.Selectable, true);
             Size = new Size(170, 90);
             Margin = new Padding(6);
-            Padding = new Padding(8);
+            Padding = new Padding(4);
             TabStop = true;
             BackColor = ThemeManager.ControlBGColor;
 
@@ -35,16 +36,19 @@ namespace MissionPlanner.Controls
             layout.RowCount = 2;
             layout.Dock = DockStyle.Fill;
             layout.BackColor = Color.Transparent;
-            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 22F));
+            layout.Margin = new Padding(0);
+            layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 18F));
             layout.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
             labelName.Dock = DockStyle.Fill;
             labelName.TextAlign = ContentAlignment.MiddleLeft;
             labelName.AutoEllipsis = true;
+            labelName.Margin = new Padding(0);
 
             labelValue.Dock = DockStyle.Fill;
-            labelValue.TextAlign = ContentAlignment.MiddleLeft;
-            labelValue.Font = new Font(Font.FontFamily, 18F, FontStyle.Bold, GraphicsUnit.Point);
+            labelValue.TextAlign = ContentAlignment.MiddleCenter;
+            labelValue.Font = new Font(Font.FontFamily, 24F, FontStyle.Bold, GraphicsUnit.Point);
+            labelValue.Margin = new Padding(0);
 
             layout.MouseDown += Tile_MouseDown;
             labelName.MouseDown += Tile_MouseDown;
@@ -79,6 +83,17 @@ namespace MissionPlanner.Controls
 
             labelValue.Text = fieldValue.FormattedValue ?? string.Empty;
             telemetryState = fieldValue.State == FieldState.Selected ? FieldState.Normal : fieldValue.State;
+            ApplyStateVisual();
+        }
+
+        public void SetValueTextColor(Color? color)
+        {
+            if (valueTextColorOverride == color)
+            {
+                return;
+            }
+
+            valueTextColorOverride = color;
             ApplyStateVisual();
         }
 
@@ -139,7 +154,7 @@ namespace MissionPlanner.Controls
         private void ApplyStateVisual()
         {
             labelName.ForeColor = ThemeManager.TextColor;
-            labelValue.ForeColor = ThemeManager.TextColor;
+            labelValue.ForeColor = valueTextColorOverride ?? ThemeManager.TextColor;
 
             var stateForVisual = isSelected ? FieldState.Selected : telemetryState;
             Color backgroundColor;

@@ -25,6 +25,29 @@ namespace MissionPlanner.GCSViews
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
         private readonly TextBox disconnectStatusTextBox = new TextBox();
         private static readonly string[] ThresholdOperators = { ">", "<", "==", "!=" };
+        private static readonly Random textColorRandom = new Random();
+        private const string ThemeDefaultTextColorOption = "Theme Default";
+        // Keep these options aligned with Quick tab value colors.
+        private static readonly string[] QuickValueTextColorOptions =
+        {
+            ThemeDefaultTextColorOption,
+            "Blue",
+            "Yellow",
+            "Pink",
+            "LimeGreen",
+            "Orange",
+            "Aqua",
+            "LightCoral",
+            "LightSteelBlue",
+            "DarkKhaki",
+            "LightYellow",
+            "Violet",
+            "YellowGreen",
+            "OrangeRed",
+            "Tomato",
+            "Teal",
+            "CornflowerBlue"
+        };
         private readonly Button buttonExplorer = new Button();
         private const int DisconnectBorderThickness = 5;
         private const int DisconnectBorderInset = 5;
@@ -37,6 +60,7 @@ namespace MissionPlanner.GCSViews
         private Point dragStartPointScreen;
         private TelemetryTileControl contextMenuTargetTile;
         private TelemetryTileControl currentDropTargetTile;
+        private bool allowExplorerWindowClose;
         private bool hasSeenAircraftConnection;
         private bool showDisconnectBorder;
 
@@ -161,6 +185,7 @@ namespace MissionPlanner.GCSViews
                         value.Units = tile.Config.UnitsOverride;
                     }
 
+                    tile.Tile.SetValueTextColor(ResolveConfiguredTextColor(tile.Config));
                     value.State = ApplyThresholdState(value, tile.Config.Thresholds);
                     ApplyDecimalPlaces(value, tile.Config.DecimalPlaces);
                     tile.Tile.SetFieldValue(value);
@@ -254,6 +279,7 @@ namespace MissionPlanner.GCSViews
             }
 
             WireTileInteractions(tile);
+            tile.SetValueTextColor(ResolveConfiguredTextColor(tileConfig));
             tiles.Add((tileConfig, tile));
             flowLayoutPanelTiles.Controls.Add(tile);
             tile.Cursor = Cursors.SizeAll;
@@ -388,15 +414,23 @@ namespace MissionPlanner.GCSViews
             if (explorerWindow == null || explorerWindow.IsDisposed)
             {
                 explorerWindow = new ExplorerWindowForm(IsFieldTileSelected, HandleExplorerFieldCheckedChanged, GetExplorerFieldLabelOverride);
+                explorerWindow.FormClosing += explorerWindow_FormClosing;
                 MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(explorerWindow);
             }
 
             if (!explorerWindow.Visible)
             {
-                var owner = FindForm();
-                if (owner != null)
+                if (explorerWindow.Owner == null)
                 {
-                    explorerWindow.Show(owner);
+                    var owner = FindForm();
+                    if (owner != null)
+                    {
+                        explorerWindow.Show(owner);
+                    }
+                    else
+                    {
+                        explorerWindow.Show();
+                    }
                 }
                 else
                 {
@@ -776,6 +810,7 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
+            UpsertFavoriteTileConfig(config);
             RefreshTiles();
             SaveDashboardConfig();
             RefreshExplorerFieldSelectionState();
@@ -793,12 +828,25 @@ namespace MissionPlanner.GCSViews
         {
             if (explorerWindow != null && !explorerWindow.IsDisposed)
             {
+                allowExplorerWindowClose = true;
                 explorerWindow.Close();
                 explorerWindow.Dispose();
                 explorerWindow = null;
             }
 
             SaveDashboardConfig();
+        }
+
+        private void explorerWindow_FormClosing(object sender, FormClosingEventArgs e)
+        {
+            if (allowExplorerWindowClose || e.CloseReason != CloseReason.UserClosing)
+            {
+                return;
+            }
+
+            // Keep explorer instance alive so reopening restores the same screen position.
+            e.Cancel = true;
+            explorerWindow.Hide();
         }
 
         private void SaveDashboardConfig()
@@ -858,6 +906,9 @@ namespace MissionPlanner.GCSViews
                 return false;
             }
 
+            var originalConfig = CloneTileConfig(config);
+            config.Thresholds = config.Thresholds ?? new DashboardThresholdConfig();
+
             using (var dialog = new Form())
             {
                 // Prefill editable fields with effective defaults so the user starts from current behavior.
@@ -869,7 +920,7 @@ namespace MissionPlanner.GCSViews
                 dialog.MinimizeBox = false;
                 dialog.MaximizeBox = false;
                 dialog.ShowInTaskbar = false;
-                dialog.ClientSize = new Size(360, 230);
+                dialog.ClientSize = new Size(360, 260);
 
                 var textLabel = new TextBox
                 {
@@ -881,6 +932,41 @@ namespace MissionPlanner.GCSViews
                     Text = string.IsNullOrWhiteSpace(config.UnitsOverride) ? defaultUnitsText : config.UnitsOverride,
                     Anchor = AnchorStyles.Left | AnchorStyles.Right
                 };
+                var comboTextColor = new ComboBox
+                {
+                    DropDownStyle = ComboBoxStyle.DropDownList,
+                    Anchor = AnchorStyles.Left | AnchorStyles.Right
+                };
+                comboTextColor.Items.AddRange(QuickValueTextColorOptions);
+                comboTextColor.SelectedItem = ResolveTextColorOption(config.TextColorName);
+                var buttonRandomTextColor = new Button
+                {
+                    Text = "Rnd",
+                    Width = 44,
+                    Anchor = AnchorStyles.Right
+                };
+                buttonRandomTextColor.Click += (s, e) =>
+                {
+                    const int firstColorIndex = 1; // Skip "Theme Default" for random color picks.
+                    if (comboTextColor.Items.Count <= firstColorIndex)
+                    {
+                        return;
+                    }
+
+                    comboTextColor.SelectedIndex = textColorRandom.Next(firstColorIndex, comboTextColor.Items.Count);
+                };
+                var colorEditor = new TableLayoutPanel
+                {
+                    ColumnCount = 2,
+                    RowCount = 1,
+                    Dock = DockStyle.Fill,
+                    Margin = Padding.Empty
+                };
+                colorEditor.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100F));
+                colorEditor.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 48F));
+                colorEditor.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
+                colorEditor.Controls.Add(comboTextColor, 0, 0);
+                colorEditor.Controls.Add(buttonRandomTextColor, 1, 0);
                 var existingDecimals = config.DecimalPlaces.HasValue
                     ? Math.Max(0, Math.Min(6, config.DecimalPlaces.Value))
                     : -1;
@@ -939,16 +1025,17 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Fill,
                     Padding = new Padding(10),
                     ColumnCount = 2,
-                    RowCount = 6
+                    RowCount = 7
                 };
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
 
                 AddConfigRow(layout, 0, "Label", textLabel);
                 AddConfigRow(layout, 1, "Units", textUnits);
-                AddConfigRow(layout, 2, "Decimal pts", decimalsEditor);
-                AddConfigRow(layout, 3, "Warning", warningEditor);
-                AddConfigRow(layout, 4, "Critical", criticalEditor);
+                AddConfigRow(layout, 2, "Value color", colorEditor);
+                AddConfigRow(layout, 3, "Decimal pts", decimalsEditor);
+                AddConfigRow(layout, 4, "Warning", warningEditor);
+                AddConfigRow(layout, 5, "Critical", criticalEditor);
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
 
                 var buttonPanel = new FlowLayoutPanel
@@ -956,45 +1043,165 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Fill,
                     FlowDirection = FlowDirection.RightToLeft
                 };
+                var buttonPresetPanel = new FlowLayoutPanel
+                {
+                    Dock = DockStyle.Fill,
+                    FlowDirection = FlowDirection.LeftToRight
+                };
 
                 var buttonOk = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
                 var buttonCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+                var buttonResetDefaults = new Button { Text = "Reset", AutoSize = true };
+                var buttonSaveFavoriteConfig = new Button { Text = "Save Fav", AutoSize = true };
+                var buttonApplyFavoriteConfig = new Button
+                {
+                    Text = "Apply Fav",
+                    AutoSize = true,
+                    Enabled = FindFavoriteTileConfig(config.FieldKey) != null
+                };
                 buttonPanel.Controls.Add(buttonOk);
                 buttonPanel.Controls.Add(buttonCancel);
+                buttonPresetPanel.Controls.Add(buttonResetDefaults);
+                buttonPresetPanel.Controls.Add(buttonSaveFavoriteConfig);
+                buttonPresetPanel.Controls.Add(buttonApplyFavoriteConfig);
 
-                layout.Controls.Add(buttonPanel, 0, 5);
-                layout.SetColumnSpan(buttonPanel, 2);
+                layout.Controls.Add(buttonPresetPanel, 0, 6);
+                layout.Controls.Add(buttonPanel, 1, 6);
 
                 dialog.Controls.Add(layout);
                 dialog.AcceptButton = buttonOk;
                 dialog.CancelButton = buttonCancel;
                 MissionPlanner.Utilities.ThemeManager.ApplyThemeTo(dialog);
 
+                Func<bool, bool> applyEditorValuesToConfig = requireValidThresholds =>
+                {
+                    var warningParsed = TryParseNullableDouble(textWarning.Text, out var warningValue);
+                    var criticalParsed = TryParseNullableDouble(textCritical.Text, out var criticalValue);
+                    if (requireValidThresholds && (!warningParsed || !criticalParsed))
+                    {
+                        return false;
+                    }
+
+                    var labelOverride = NormalizeOverrideText(textLabel.Text);
+                    var unitsOverride = NormalizeOverrideText(textUnits.Text);
+                    var normalizedDefaultLabel = NormalizeOverrideText(defaultLabelText);
+                    var normalizedDefaultUnits = NormalizeOverrideText(defaultUnitsText);
+                    config.LabelOverride = string.Equals(labelOverride, normalizedDefaultLabel, StringComparison.Ordinal) ? null : labelOverride;
+                    config.UnitsOverride = string.Equals(unitsOverride, normalizedDefaultUnits, StringComparison.Ordinal) ? null : unitsOverride;
+                    config.TextColorName = NormalizeTextColorSelection(comboTextColor.SelectedItem as string);
+                    config.DecimalPlaces = checkAutoDecimals.Checked ? (int?)null : (int)inputCustomDecimals.Value;
+                    config.Thresholds.WarningOperator = ResolveThresholdOperator(comboWarningOperator.SelectedItem as string);
+                    config.Thresholds.CriticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
+
+                    // Ignore partially typed invalid threshold text during live preview.
+                    if (warningParsed)
+                    {
+                        config.Thresholds.Warning = warningValue;
+                    }
+
+                    if (criticalParsed)
+                    {
+                        config.Thresholds.Critical = criticalValue;
+                    }
+
+                    return true;
+                };
+
+                Action refreshPreview = () =>
+                {
+                    applyEditorValuesToConfig(false);
+                    RefreshTiles();
+                };
+
+                Action<DashboardTileConfig> loadEditorsFromConfig = source =>
+                {
+                    textLabel.Text = string.IsNullOrWhiteSpace(source?.LabelOverride) ? defaultLabelText : source.LabelOverride;
+                    textUnits.Text = string.IsNullOrWhiteSpace(source?.UnitsOverride) ? defaultUnitsText : source.UnitsOverride;
+                    comboTextColor.SelectedItem = ResolveTextColorOption(source?.TextColorName);
+                    if (comboTextColor.SelectedIndex < 0 && comboTextColor.Items.Count > 0)
+                    {
+                        comboTextColor.SelectedIndex = 0;
+                    }
+
+                    var sourceDecimals = source?.DecimalPlaces;
+                    checkAutoDecimals.Checked = !sourceDecimals.HasValue;
+                    inputCustomDecimals.Value = sourceDecimals.HasValue
+                        ? Math.Max(inputCustomDecimals.Minimum, Math.Min(inputCustomDecimals.Maximum, sourceDecimals.Value))
+                        : 1;
+
+                    comboWarningOperator.SelectedItem = ResolveThresholdOperator(source?.Thresholds?.WarningOperator);
+                    comboCriticalOperator.SelectedItem = ResolveThresholdOperator(source?.Thresholds?.CriticalOperator);
+                    textWarning.Text = source?.Thresholds?.Warning?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                    textCritical.Text = source?.Thresholds?.Critical?.ToString(CultureInfo.InvariantCulture) ?? string.Empty;
+                };
+
+                EventHandler livePreviewChanged = (s, e) =>
+                {
+                    refreshPreview();
+                };
+
+                textLabel.TextChanged += livePreviewChanged;
+                textUnits.TextChanged += livePreviewChanged;
+                comboTextColor.SelectedIndexChanged += livePreviewChanged;
+                checkAutoDecimals.CheckedChanged += livePreviewChanged;
+                inputCustomDecimals.ValueChanged += livePreviewChanged;
+                comboWarningOperator.SelectedIndexChanged += livePreviewChanged;
+                textWarning.TextChanged += livePreviewChanged;
+                comboCriticalOperator.SelectedIndexChanged += livePreviewChanged;
+                textCritical.TextChanged += livePreviewChanged;
+                buttonResetDefaults.Click += (s, e) =>
+                {
+                    // Reset editor controls to baseline defaults for this selected field.
+                    loadEditorsFromConfig(new DashboardTileConfig
+                    {
+                        Thresholds = new DashboardThresholdConfig()
+                    });
+                    refreshPreview();
+                };
+                buttonSaveFavoriteConfig.Click += (s, e) =>
+                {
+                    if (!applyEditorValuesToConfig(true))
+                    {
+                        MessageBox.Show(dialog, "Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
+                            MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                        return;
+                    }
+
+                    // Config dialog favorites write into the same dashboard favorite set.
+                    UpsertFavoriteTileConfig(config);
+                    dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+                    DashboardConfigStore.Save(dashboardConfig);
+                    buttonApplyFavoriteConfig.Enabled = true;
+                };
+                buttonApplyFavoriteConfig.Click += (s, e) =>
+                {
+                    var favoriteConfig = FindFavoriteTileConfig(config.FieldKey);
+                    if (favoriteConfig == null)
+                    {
+                        return;
+                    }
+
+                    loadEditorsFromConfig(favoriteConfig);
+                    refreshPreview();
+                };
+
                 if (dialog.ShowDialog(this) != DialogResult.OK)
                 {
+                    // Cancel discards transient preview edits applied while typing.
+                    CopyTileConfig(originalConfig, config);
+                    RefreshTiles();
                     return false;
                 }
 
-                if (!TryParseNullableDouble(textWarning.Text, out var warningValue) ||
-                    !TryParseNullableDouble(textCritical.Text, out var criticalValue))
+                if (!applyEditorValuesToConfig(true))
                 {
+                    CopyTileConfig(originalConfig, config);
+                    RefreshTiles();
                     MessageBox.Show(this, "Warning/Critical thresholds must be numeric values.", "Invalid Threshold",
                         MessageBoxButtons.OK, MessageBoxIcon.Warning);
                     return false;
                 }
 
-                var labelOverride = NormalizeOverrideText(textLabel.Text);
-                var unitsOverride = NormalizeOverrideText(textUnits.Text);
-                var normalizedDefaultLabel = NormalizeOverrideText(defaultLabelText);
-                var normalizedDefaultUnits = NormalizeOverrideText(defaultUnitsText);
-                config.LabelOverride = string.Equals(labelOverride, normalizedDefaultLabel, StringComparison.Ordinal) ? null : labelOverride;
-                config.UnitsOverride = string.Equals(unitsOverride, normalizedDefaultUnits, StringComparison.Ordinal) ? null : unitsOverride;
-                config.DecimalPlaces = checkAutoDecimals.Checked ? (int?)null : (int)inputCustomDecimals.Value;
-                config.Thresholds = config.Thresholds ?? new DashboardThresholdConfig();
-                config.Thresholds.WarningOperator = ResolveThresholdOperator(comboWarningOperator.SelectedItem as string);
-                config.Thresholds.Warning = warningValue;
-                config.Thresholds.CriticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
-                config.Thresholds.Critical = criticalValue;
                 return true;
             }
         }
@@ -1049,6 +1256,47 @@ namespace MissionPlanner.GCSViews
             }
 
             return ">";
+        }
+
+        private static string ResolveTextColorOption(string configuredColorName)
+        {
+            foreach (var option in QuickValueTextColorOptions)
+            {
+                if (string.Equals(option, configuredColorName, StringComparison.OrdinalIgnoreCase))
+                {
+                    return option;
+                }
+            }
+
+            return ThemeDefaultTextColorOption;
+        }
+
+        private static string NormalizeTextColorSelection(string selectedOption)
+        {
+            if (string.IsNullOrWhiteSpace(selectedOption) ||
+                string.Equals(selectedOption, ThemeDefaultTextColorOption, StringComparison.OrdinalIgnoreCase))
+            {
+                return null;
+            }
+
+            return selectedOption;
+        }
+
+        private static Color? ResolveConfiguredTextColor(DashboardTileConfig config)
+        {
+            var colorName = config?.TextColorName;
+            if (string.IsNullOrWhiteSpace(colorName))
+            {
+                return null;
+            }
+
+            var color = Color.FromName(colorName.Trim());
+            if (!color.IsNamedColor && !color.IsKnownColor)
+            {
+                return null;
+            }
+
+            return color;
         }
 
         private static void ApplyDecimalPlaces(FieldValue fieldValue, int? decimalPlaces)
@@ -1464,6 +1712,59 @@ namespace MissionPlanner.GCSViews
             return null;
         }
 
+        private DashboardTileConfig FindFavoriteTileConfig(FieldKey fieldKey)
+        {
+            if (dashboardConfig?.FavoriteTiles == null)
+            {
+                return null;
+            }
+
+            foreach (var favorite in dashboardConfig.FavoriteTiles)
+            {
+                if (favorite?.FieldKey != null && FieldKeyEquals(favorite.FieldKey, fieldKey))
+                {
+                    return favorite;
+                }
+            }
+
+            return null;
+        }
+
+        private void UpsertFavoriteTileConfig(DashboardTileConfig sourceConfig)
+        {
+            if (dashboardConfig == null || sourceConfig?.FieldKey == null)
+            {
+                return;
+            }
+
+            if (dashboardConfig.FavoriteLayout == null)
+            {
+                dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+            }
+
+            if (dashboardConfig.FavoriteTiles == null || dashboardConfig.FavoriteTiles.Count == 0)
+            {
+                dashboardConfig.FavoriteTiles = CloneTileConfigList(dashboardConfig.Tiles);
+            }
+
+            var favoriteTiles = dashboardConfig.FavoriteTiles;
+            for (var i = 0; i < favoriteTiles.Count; i++)
+            {
+                var favorite = favoriteTiles[i];
+                if (favorite?.FieldKey == null || !FieldKeyEquals(favorite.FieldKey, sourceConfig.FieldKey))
+                {
+                    continue;
+                }
+
+                var replacement = CloneTileConfig(sourceConfig);
+                replacement.IsVisible = favorite.IsVisible;
+                favoriteTiles[i] = replacement;
+                return;
+            }
+
+            favoriteTiles.Add(CloneTileConfig(sourceConfig));
+        }
+
         private static DashboardTileConfig CloneTileConfig(DashboardTileConfig source)
         {
             if (source == null)
@@ -1482,6 +1783,7 @@ namespace MissionPlanner.GCSViews
                 IsVisible = source.IsVisible,
                 LabelOverride = source.LabelOverride,
                 UnitsOverride = source.UnitsOverride,
+                TextColorName = source.TextColorName,
                 DecimalPlaces = source.DecimalPlaces,
                 Thresholds = new DashboardThresholdConfig
                 {
@@ -1491,6 +1793,29 @@ namespace MissionPlanner.GCSViews
                     Critical = source.Thresholds?.Critical
                 },
                 TileType = source.TileType
+            };
+        }
+
+        private static void CopyTileConfig(DashboardTileConfig source, DashboardTileConfig target)
+        {
+            if (source == null || target == null)
+            {
+                return;
+            }
+
+            target.FieldKey = source.FieldKey == null ? null : CloneFieldKey(source.FieldKey);
+            target.IsVisible = source.IsVisible;
+            target.LabelOverride = source.LabelOverride;
+            target.UnitsOverride = source.UnitsOverride;
+            target.TextColorName = source.TextColorName;
+            target.DecimalPlaces = source.DecimalPlaces;
+            target.TileType = source.TileType;
+            target.Thresholds = new DashboardThresholdConfig
+            {
+                WarningOperator = source.Thresholds?.WarningOperator,
+                Warning = source.Thresholds?.Warning,
+                CriticalOperator = source.Thresholds?.CriticalOperator,
+                Critical = source.Thresholds?.Critical
             };
         }
 

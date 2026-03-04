@@ -27,6 +27,7 @@ namespace MissionPlanner.MavlinkDashboard
         public bool IsVisible { get; set; } = true;
         public string LabelOverride { get; set; }
         public string UnitsOverride { get; set; }
+        public string TextColorName { get; set; }
         public int? DecimalPlaces { get; set; }
         public DashboardThresholdConfig Thresholds { get; set; } = new DashboardThresholdConfig();
         public string TileType { get; set; } = "Value";
@@ -139,6 +140,11 @@ namespace MissionPlanner.MavlinkDashboard
                 }
 
                 tile.Thresholds = tile.Thresholds ?? new DashboardThresholdConfig();
+                if (string.IsNullOrWhiteSpace(tile.TextColorName))
+                {
+                    tile.TextColorName = null;
+                }
+
                 if (string.IsNullOrWhiteSpace(tile.Thresholds.WarningOperator))
                 {
                     tile.Thresholds.WarningOperator = ">";
@@ -157,5 +163,6 @@ namespace MissionPlanner.MavlinkDashboard
 
             return tiles;
         }
+
     }
 }
