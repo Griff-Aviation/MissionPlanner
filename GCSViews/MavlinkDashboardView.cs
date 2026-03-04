@@ -309,11 +309,11 @@ namespace MissionPlanner.GCSViews
             disconnectStatusTextBox.TextAlign = HorizontalAlignment.Center;
             disconnectStatusTextBox.Font = new Font(Font.FontFamily, 12F, FontStyle.Bold, GraphicsUnit.Point);
             disconnectStatusTextBox.Text = "DISCONNECTED FROM AIRCRAFT";
+            disconnectStatusTextBox.Width = 340;
             disconnectStatusTextBox.Height = 26;
             disconnectStatusTextBox.Visible = false;
             disconnectStatusTextBox.ForeColor = DisconnectStatusTextColor;
             disconnectStatusTextBox.BackColor = MissionPlanner.Utilities.ThemeManager.ControlBGColor;
-            SizeDisconnectStatusTextBoxToText();
 
             panelTop.Controls.Add(disconnectStatusTextBox);
             panelTop.Resize += panelTop_Resize;
@@ -329,12 +329,6 @@ namespace MissionPlanner.GCSViews
         {
             var x = (panelTop.ClientSize.Width - disconnectStatusTextBox.Width) / 2;
             disconnectStatusTextBox.Location = new Point(Math.Max(0, x), 5);
-        }
-
-        private void SizeDisconnectStatusTextBoxToText()
-        {
-            var measured = TextRenderer.MeasureText(disconnectStatusTextBox.Text ?? string.Empty, disconnectStatusTextBox.Font);
-            disconnectStatusTextBox.Width = Math.Max(220, measured.Width + 24);
         }
 
         private void InitializeTileContextMenu()
@@ -1628,8 +1622,11 @@ namespace MissionPlanner.GCSViews
                     Margin = Padding.Empty,
                     Padding = Padding.Empty
                 };
+                var searchExampleText = "* wildcard (e.g. esc*_temp)";
+                var searchExampleFont = new Font(Font.FontFamily, 7F, FontStyle.Regular, GraphicsUnit.Point);
+                var searchExampleWidth = Math.Max(120, TextRenderer.MeasureText(searchExampleText, searchExampleFont).Width + 6);
                 searchHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 60F));
-                searchHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
+                searchHeaderRow.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, searchExampleWidth));
                 searchHeaderRow.RowStyles.Add(new RowStyle(SizeType.Percent, 100F));
 
                 searchLabel.Name = "explorerSearchLabel";
@@ -1638,9 +1635,9 @@ namespace MissionPlanner.GCSViews
                 searchLabel.TextAlign = ContentAlignment.BottomLeft;
 
                 searchExampleLabel.Name = "explorerSearchExampleLabel";
-                searchExampleLabel.Text = "* wildcard, e.g. esc*_temp";
+                searchExampleLabel.Text = searchExampleText;
                 searchExampleLabel.Dock = DockStyle.Fill;
-                searchExampleLabel.Font = new Font(Font.FontFamily, 7F, FontStyle.Regular, GraphicsUnit.Point);
+                searchExampleLabel.Font = searchExampleFont;
                 searchExampleLabel.TextAlign = ContentAlignment.BottomRight;
 
                 searchTextBox.Name = "explorerSearchTextBox";
