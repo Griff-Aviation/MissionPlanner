@@ -15,7 +15,6 @@ namespace MissionPlanner.MavlinkDashboard
     {
         public string Message { get; set; }
         public string Field { get; set; }
-        public int? InstanceId { get; set; }
     }
 
     public class FieldValue

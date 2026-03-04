@@ -15,7 +15,9 @@ namespace MissionPlanner.MavlinkDashboard
     public class DashboardConfig
     {
         public List<DashboardTileConfig> Tiles { get; set; } = new List<DashboardTileConfig>();
+        public List<DashboardTileConfig> FavoriteTiles { get; set; }
         public DashboardLayoutConfig Layout { get; set; } = new DashboardLayoutConfig();
+        public DashboardLayoutConfig FavoriteLayout { get; set; }
         public DashboardGlobalOptions GlobalOptions { get; set; } = new DashboardGlobalOptions();
     }
 
@@ -113,16 +115,26 @@ namespace MissionPlanner.MavlinkDashboard
                 config = new DashboardConfig();
             }
 
-            config.Tiles = config.Tiles ?? new List<DashboardTileConfig>();
+            config.Tiles = NormalizeTiles(config.Tiles ?? new List<DashboardTileConfig>());
+            if (config.FavoriteTiles != null)
+            {
+                config.FavoriteTiles = NormalizeTiles(config.FavoriteTiles);
+            }
+
             config.Layout = config.Layout ?? new DashboardLayoutConfig();
             config.GlobalOptions = config.GlobalOptions ?? new DashboardGlobalOptions();
 
-            for (int i = config.Tiles.Count - 1; i >= 0; i--)
+            return config;
+        }
+
+        private static List<DashboardTileConfig> NormalizeTiles(List<DashboardTileConfig> tiles)
+        {
+            for (int i = tiles.Count - 1; i >= 0; i--)
             {
-                var tile = config.Tiles[i];
+                var tile = tiles[i];
                 if (tile?.FieldKey == null || string.IsNullOrWhiteSpace(tile.FieldKey.Field))
                 {
-                    config.Tiles.RemoveAt(i);
+                    tiles.RemoveAt(i);
                     continue;
                 }
 
@@ -143,7 +155,7 @@ namespace MissionPlanner.MavlinkDashboard
                 }
             }
 
-            return config;
+            return tiles;
         }
     }
 }

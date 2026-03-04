@@ -15,18 +15,15 @@ namespace MissionPlanner.GCSViews
         public event EventHandler PopOutRequested;
         public event EventHandler PopInRequested;
         private bool isPoppedOut;
-        private bool editMode;
         private readonly IFieldValueSource fieldValueSource = new CurrentStateFieldValueSource();
         // Keep config metadata and runtime control together so tile order/state stays in sync.
         private readonly List<(DashboardTileConfig Config, TelemetryTileControl Tile)> tiles = new List<(DashboardTileConfig Config, TelemetryTileControl Tile)>();
-        private readonly Button buttonResetDefaults = new Button();
-        private readonly Button buttonEditDashboard = new Button();
+        private readonly Button buttonSaveFavorite = new Button();
+        private readonly Button buttonApplyFavorite = new Button();
         private readonly ContextMenuStrip tileContextMenu = new ContextMenuStrip();
         private readonly ToolStripMenuItem configureTileMenuItem = new ToolStripMenuItem("Configure...");
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
         private static readonly string[] ThresholdOperators = { ">", "<", "==", "!=" };
-        // Visual edit-mode cue rendered above all children without affecting layout metrics.
-        private readonly EditModeOverlayControl editModeOverlay = new EditModeOverlayControl();
         private readonly Button buttonExplorer = new Button();
         private ExplorerWindowForm explorerWindow;
         private DashboardConfig dashboardConfig;
@@ -38,12 +35,11 @@ namespace MissionPlanner.GCSViews
         public MavlinkDashboardView()
         {
             InitializeComponent();
-            InitializeResetButton();
-            InitializeEditButton();
+            InitializeSaveFavoriteButton();
+            InitializeApplyFavoriteButton();
             InitializeExplorerButton();
             InitializeTileContextMenu();
             InitializeEditModeSupport();
-            InitializeEditModeOverlay();
             SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer, true);
             SetPoppedOutState(false);
             LoadDashboardConfig();
@@ -151,7 +147,7 @@ namespace MissionPlanner.GCSViews
 
         private void ApplyDashboardConfig(DashboardConfig config)
         {
-            // Rebuild panel from config order so startup and reset are deterministic.
+            // Rebuild panel from config order so startup/apply actions are deterministic.
             flowLayoutPanelTiles.SuspendLayout();
             flowLayoutPanelTiles.Controls.Clear();
             tiles.Clear();
@@ -178,13 +174,9 @@ namespace MissionPlanner.GCSViews
             }
 
             var fieldName = tileConfig.FieldKey.Field;
-            var instanceSuffix = tileConfig.FieldKey.InstanceId.HasValue
-                ? "_" + tileConfig.FieldKey.InstanceId.Value.ToString(CultureInfo.InvariantCulture)
-                : string.Empty;
-
             var tile = new TelemetryTileControl
             {
-                Name = "tile_" + fieldName.ToLowerInvariant() + instanceSuffix
+                Name = "tile_" + fieldName.ToLowerInvariant()
             };
 
             if (dashboardConfig?.Layout != null)
@@ -197,41 +189,41 @@ namespace MissionPlanner.GCSViews
             WireTileInteractions(tile);
             tiles.Add((tileConfig, tile));
             flowLayoutPanelTiles.Controls.Add(tile);
-            UpdateTileInteractionState();
+            tile.Cursor = Cursors.SizeAll;
             RefreshExplorerFieldSelectionState();
         }
 
-        private void InitializeResetButton()
+        private void InitializeSaveFavoriteButton()
         {
-            buttonResetDefaults.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonResetDefaults.Location = new Point(3, 6);
-            buttonResetDefaults.Name = "buttonResetDefaults";
-            buttonResetDefaults.Size = new Size(60, 23);
-            buttonResetDefaults.TabIndex = 1;
-            buttonResetDefaults.Text = "Reset";
-            buttonResetDefaults.UseVisualStyleBackColor = true;
-            buttonResetDefaults.Click += buttonResetDefaults_Click;
-            panelTop.Controls.Add(buttonResetDefaults);
+            buttonSaveFavorite.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonSaveFavorite.Location = new Point(3, 6);
+            buttonSaveFavorite.Name = "buttonSaveFavorite";
+            buttonSaveFavorite.Size = new Size(95, 23);
+            buttonSaveFavorite.TabIndex = 1;
+            buttonSaveFavorite.Text = "Save Favourite";
+            buttonSaveFavorite.UseVisualStyleBackColor = true;
+            buttonSaveFavorite.Click += buttonSaveFavorite_Click;
+            panelTop.Controls.Add(buttonSaveFavorite);
         }
 
-        private void InitializeEditButton()
+        private void InitializeApplyFavoriteButton()
         {
-            buttonEditDashboard.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonEditDashboard.Location = new Point(66, 6);
-            buttonEditDashboard.Name = "buttonEditDashboard";
-            buttonEditDashboard.Size = new Size(95, 23);
-            buttonEditDashboard.TabIndex = 2;
-            buttonEditDashboard.Text = "Edit Dashboard";
-            buttonEditDashboard.UseVisualStyleBackColor = true;
-            buttonEditDashboard.Click += buttonEditDashboard_Click;
-            panelTop.Controls.Add(buttonEditDashboard);
+            buttonApplyFavorite.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonApplyFavorite.Location = new Point(101, 6);
+            buttonApplyFavorite.Name = "buttonApplyFavorite";
+            buttonApplyFavorite.Size = new Size(95, 23);
+            buttonApplyFavorite.TabIndex = 2;
+            buttonApplyFavorite.Text = "Apply Favourite";
+            buttonApplyFavorite.UseVisualStyleBackColor = true;
+            buttonApplyFavorite.Click += buttonApplyFavorite_Click;
+            panelTop.Controls.Add(buttonApplyFavorite);
         }
 
         private void InitializeExplorerButton()
         {
             // Explorer is always available and opens in a separate modeless window.
             buttonExplorer.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonExplorer.Location = new Point(164, 6);
+            buttonExplorer.Location = new Point(200, 6);
             buttonExplorer.Name = "buttonExplorer";
             buttonExplorer.Size = new Size(70, 23);
             buttonExplorer.TabIndex = 3;
@@ -260,16 +252,6 @@ namespace MissionPlanner.GCSViews
             flowLayoutPanelTiles.DragOver += flowLayoutPanelTiles_DragOver;
             flowLayoutPanelTiles.DragLeave += flowLayoutPanelTiles_DragLeave;
             flowLayoutPanelTiles.DragDrop += flowLayoutPanelTiles_DragDrop;
-        }
-
-        private void InitializeEditModeOverlay()
-        {
-            editModeOverlay.Dock = DockStyle.Fill;
-            editModeOverlay.Visible = false;
-            editModeOverlay.TabStop = false;
-            Controls.Add(editModeOverlay);
-            // Must stay on top so the border is not hidden by docked child controls.
-            editModeOverlay.BringToFront();
         }
 
         private void ShowExplorerWindow()
@@ -312,53 +294,26 @@ namespace MissionPlanner.GCSViews
             explorerWindow.UpdateCurrentStatePreviewValues(MainV2.comPort?.MAV?.cs);
         }
 
-        private void buttonResetDefaults_Click(object sender, EventArgs e)
+        private void buttonSaveFavorite_Click(object sender, EventArgs e)
         {
-            dashboardConfig = CreateDefaultConfig();
-            ApplyDashboardConfig(dashboardConfig);
             SaveDashboardConfig();
-            RefreshTiles();
+            dashboardConfig.FavoriteTiles = CloneTileConfigList(dashboardConfig.Tiles);
+            dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+            DashboardConfigStore.Save(dashboardConfig);
         }
 
-        private void buttonEditDashboard_Click(object sender, EventArgs e)
+        private void buttonApplyFavorite_Click(object sender, EventArgs e)
         {
-            SetEditMode(!editMode);
-        }
-
-        private void SetEditMode(bool enabled)
-        {
-            if (editMode == enabled)
+            if (dashboardConfig?.FavoriteTiles == null || dashboardConfig.FavoriteTiles.Count == 0)
             {
                 return;
             }
 
-            editMode = enabled;
-            buttonEditDashboard.Text = enabled ? "Done Editing" : "Edit Dashboard";
-            UpdateTileInteractionState();
-            // Toggle the top-most border overlay with edit mode.
-            editModeOverlay.Visible = enabled;
-
-            if (enabled)
-            {
-                // Ensure re-ordering/resize repaint does not bury the edit overlay.
-                editModeOverlay.BringToFront();
-                editModeOverlay.Invalidate();
-            }
-
-            if (!enabled)
-            {
-                // Persist once when editing session ends.
-                ClearDropTargetHighlight();
-                SaveDashboardConfig();
-            }
-        }
-
-        private void UpdateTileInteractionState()
-        {
-            foreach (var tile in tiles)
-            {
-                tile.Tile.Cursor = editMode ? Cursors.SizeAll : Cursors.Default;
-            }
+            dashboardConfig.Tiles = CloneTileConfigList(dashboardConfig.FavoriteTiles);
+            dashboardConfig.Layout = CloneLayoutConfig(dashboardConfig.FavoriteLayout) ?? dashboardConfig.Layout;
+            ApplyDashboardConfig(dashboardConfig);
+            SaveDashboardConfig();
+            RefreshTiles();
         }
 
         private void WireTileInteractions(TelemetryTileControl tile)
@@ -381,7 +336,7 @@ namespace MissionPlanner.GCSViews
 
         private void TileSurface_MouseDown(TelemetryTileControl tile, MouseEventArgs e)
         {
-            if (!editMode || e.Button != MouseButtons.Left)
+            if (e.Button != MouseButtons.Left)
             {
                 return;
             }
@@ -393,7 +348,7 @@ namespace MissionPlanner.GCSViews
 
         private void TileSurface_MouseMove(TelemetryTileControl tile, MouseEventArgs e)
         {
-            if (!editMode || draggingTile != tile)
+            if (draggingTile != tile)
             {
                 return;
             }
@@ -429,7 +384,7 @@ namespace MissionPlanner.GCSViews
 
         private void flowLayoutPanelTiles_DragEnter(object sender, DragEventArgs e)
         {
-            e.Effect = editMode && e.Data.GetDataPresent(typeof(TelemetryTileControl))
+            e.Effect = e.Data.GetDataPresent(typeof(TelemetryTileControl))
                 ? DragDropEffects.Move
                 : DragDropEffects.None;
         }
@@ -437,7 +392,7 @@ namespace MissionPlanner.GCSViews
         private void flowLayoutPanelTiles_DragOver(object sender, DragEventArgs e)
         {
             // Keep WinForms drop effect updated and drive live hover highlighting while dragging.
-            e.Effect = editMode && e.Data.GetDataPresent(typeof(TelemetryTileControl))
+            e.Effect = e.Data.GetDataPresent(typeof(TelemetryTileControl))
                 ? DragDropEffects.Move
                 : DragDropEffects.None;
 
@@ -468,7 +423,7 @@ namespace MissionPlanner.GCSViews
         {
             ClearDropTargetHighlight();
 
-            if (!editMode || !e.Data.GetDataPresent(typeof(TelemetryTileControl)))
+            if (!e.Data.GetDataPresent(typeof(TelemetryTileControl)))
             {
                 return;
             }
@@ -484,6 +439,7 @@ namespace MissionPlanner.GCSViews
             // Drop on tile -> use tile index; drop in gap -> compute insertion slot from gap location.
             var targetIndex = target == null ? GetGapInsertionIndex(point) : GetTileIndex(target);
             MoveTile(dragged, targetIndex);
+            SaveDashboardConfig();
         }
 
         private void UpdateDropTargetHighlight(TelemetryTileControl dragged, Point pointerPointInPanel)
@@ -590,7 +546,7 @@ namespace MissionPlanner.GCSViews
             // Resolve the owning tile from whichever inner child was right-clicked.
             contextMenuTargetTile = GetTileFromControl(tileContextMenu.SourceControl);
             configureTileMenuItem.Enabled = contextMenuTargetTile != null;
-            removeTileMenuItem.Enabled = editMode && contextMenuTargetTile != null;
+            removeTileMenuItem.Enabled = contextMenuTargetTile != null;
 
             if (contextMenuTargetTile == null)
             {
@@ -600,7 +556,7 @@ namespace MissionPlanner.GCSViews
 
         private void removeTileMenuItem_Click(object sender, EventArgs e)
         {
-            if (!editMode || contextMenuTargetTile == null)
+            if (contextMenuTargetTile == null)
             {
                 return;
             }
@@ -614,6 +570,7 @@ namespace MissionPlanner.GCSViews
             RemoveTileForFieldKey(tiles[index].Config.FieldKey);
             contextMenuTargetTile = null;
             RefreshTiles();
+            SaveDashboardConfig();
             RefreshExplorerFieldSelectionState();
         }
 
@@ -806,19 +763,6 @@ namespace MissionPlanner.GCSViews
                     Text = config.Thresholds?.Critical?.ToString(CultureInfo.InvariantCulture) ?? string.Empty,
                     Anchor = AnchorStyles.Left | AnchorStyles.Right
                 };
-                var comboInstance = new ComboBox
-                {
-                    DropDownStyle = ComboBoxStyle.DropDownList,
-                    Anchor = AnchorStyles.Left | AnchorStyles.Right
-                };
-
-                var instanceOptions = BuildInstanceOptions(config.FieldKey);
-                foreach (var option in instanceOptions)
-                {
-                    comboInstance.Items.Add(option);
-                }
-
-                comboInstance.SelectedIndex = FindInstanceOptionIndex(instanceOptions, config.FieldKey.InstanceId);
 
                 var warningEditor = CreateThresholdEditor(comboWarningOperator, textWarning);
                 var criticalEditor = CreateThresholdEditor(comboCriticalOperator, textCritical);
@@ -828,7 +772,7 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Fill,
                     Padding = new Padding(10),
                     ColumnCount = 2,
-                    RowCount = 7
+                    RowCount = 6
                 };
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -838,7 +782,6 @@ namespace MissionPlanner.GCSViews
                 AddConfigRow(layout, 2, "Decimal pts", decimalsEditor);
                 AddConfigRow(layout, 3, "Warning", warningEditor);
                 AddConfigRow(layout, 4, "Critical", criticalEditor);
-                AddConfigRow(layout, 5, "Instance", comboInstance);
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
 
                 var buttonPanel = new FlowLayoutPanel
@@ -852,7 +795,7 @@ namespace MissionPlanner.GCSViews
                 buttonPanel.Controls.Add(buttonOk);
                 buttonPanel.Controls.Add(buttonCancel);
 
-                layout.Controls.Add(buttonPanel, 0, 6);
+                layout.Controls.Add(buttonPanel, 0, 5);
                 layout.SetColumnSpan(buttonPanel, 2);
 
                 dialog.Controls.Add(layout);
@@ -885,9 +828,6 @@ namespace MissionPlanner.GCSViews
                 config.Thresholds.Warning = warningValue;
                 config.Thresholds.CriticalOperator = ResolveThresholdOperator(comboCriticalOperator.SelectedItem as string);
                 config.Thresholds.Critical = criticalValue;
-
-                var selectedInstance = comboInstance.SelectedItem as InstanceOption;
-                config.FieldKey.InstanceId = selectedInstance?.InstanceId;
                 return true;
             }
         }
@@ -1059,54 +999,6 @@ namespace MissionPlanner.GCSViews
             container.Controls.Add(operatorSelector, 0, 0);
             container.Controls.Add(valueEditor, 1, 0);
             return container;
-        }
-
-        private static List<InstanceOption> BuildInstanceOptions(FieldKey fieldKey)
-        {
-            var options = new List<InstanceOption>
-            {
-                new InstanceOption("Default", null)
-            };
-
-            if (!IsBatteryRelatedField(fieldKey?.Field))
-            {
-                return options;
-            }
-
-            // Store raw IDs while showing human-friendly battery names.
-            options.Add(new InstanceOption("Battery 1", 0));
-            options.Add(new InstanceOption("Battery 2", 1));
-
-            var currentInstance = fieldKey?.InstanceId;
-            if (currentInstance.HasValue && currentInstance.Value != 0 && currentInstance.Value != 1)
-            {
-                options.Add(new InstanceOption("Instance " + currentInstance.Value.ToString(CultureInfo.InvariantCulture), currentInstance.Value));
-            }
-
-            return options;
-        }
-
-        private static int FindInstanceOptionIndex(List<InstanceOption> options, int? instanceId)
-        {
-            if (options == null || options.Count == 0)
-            {
-                return -1;
-            }
-
-            var idx = options.FindIndex(x => x.InstanceId == instanceId);
-            return idx >= 0 ? idx : 0;
-        }
-
-        private static bool IsBatteryRelatedField(string fieldName)
-        {
-            if (string.IsNullOrWhiteSpace(fieldName))
-            {
-                return false;
-            }
-
-            var normalized = NormalizeCurrentStateFieldName(fieldName);
-            return normalized.StartsWith("battery_voltage", StringComparison.OrdinalIgnoreCase) ||
-                   normalized.StartsWith("battery_remaining", StringComparison.OrdinalIgnoreCase);
         }
 
         private static FieldState ApplyThresholdState(FieldValue fieldValue, DashboardThresholdConfig thresholds)
@@ -1322,8 +1214,7 @@ namespace MissionPlanner.GCSViews
             var rightField = useCurrentStateAlias ? NormalizeCurrentStateFieldName(right.Field) : (right.Field ?? string.Empty);
 
             return string.Equals(leftMessage, rightMessage, StringComparison.OrdinalIgnoreCase)
-                && string.Equals(leftField, rightField, StringComparison.OrdinalIgnoreCase)
-                && left.InstanceId == right.InstanceId;
+                && string.Equals(leftField, rightField, StringComparison.OrdinalIgnoreCase);
         }
 
         private static string NormalizeCurrentStateFieldName(string fieldName)
@@ -1379,8 +1270,7 @@ namespace MissionPlanner.GCSViews
             return new FieldKey
             {
                 Message = fieldKey.Message,
-                Field = fieldKey.Field,
-                InstanceId = fieldKey.InstanceId
+                Field = fieldKey.Field
             };
         }
 
@@ -1415,8 +1305,7 @@ namespace MissionPlanner.GCSViews
                 FieldKey = source.FieldKey == null ? null : new FieldKey
                 {
                     Message = source.FieldKey.Message,
-                    Field = source.FieldKey.Field,
-                    InstanceId = source.FieldKey.InstanceId
+                    Field = source.FieldKey.Field
                 },
                 IsVisible = source.IsVisible,
                 LabelOverride = source.LabelOverride,
@@ -1433,6 +1322,41 @@ namespace MissionPlanner.GCSViews
             };
         }
 
+        private static List<DashboardTileConfig> CloneTileConfigList(List<DashboardTileConfig> source)
+        {
+            var result = new List<DashboardTileConfig>();
+            if (source == null)
+            {
+                return result;
+            }
+
+            foreach (var tile in source)
+            {
+                var cloned = CloneTileConfig(tile);
+                if (cloned != null)
+                {
+                    result.Add(cloned);
+                }
+            }
+
+            return result;
+        }
+
+        private static DashboardLayoutConfig CloneLayoutConfig(DashboardLayoutConfig source)
+        {
+            if (source == null)
+            {
+                return null;
+            }
+
+            return new DashboardLayoutConfig
+            {
+                ColumnsHint = source.ColumnsHint,
+                TileWidth = source.TileWidth,
+                TileHeight = source.TileHeight
+            };
+        }
+
         private int GetColumnsHint()
         {
             if (tiles.Count == 0)
@@ -1443,23 +1367,6 @@ namespace MissionPlanner.GCSViews
             var tileWidth = tiles[0].Tile.Width + tiles[0].Tile.Margin.Horizontal;
             var availableWidth = Math.Max(1, flowLayoutPanelTiles.ClientSize.Width - flowLayoutPanelTiles.Padding.Horizontal);
             return Math.Max(1, availableWidth / Math.Max(1, tileWidth));
-        }
-
-        private sealed class InstanceOption
-        {
-            public InstanceOption(string label, int? instanceId)
-            {
-                Label = label;
-                InstanceId = instanceId;
-            }
-
-            public string Label { get; }
-            public int? InstanceId { get; }
-
-            public override string ToString()
-            {
-                return Label;
-            }
         }
 
         private sealed class ExplorerWindowForm : Form
@@ -1865,8 +1772,7 @@ namespace MissionPlanner.GCSViews
                 return new FieldKey
                 {
                     Message = CurrentStateMessageName,
-                    Field = fieldName,
-                    InstanceId = null
+                    Field = fieldName
                 };
             }
 
@@ -1892,56 +1798,5 @@ namespace MissionPlanner.GCSViews
             }
         }
 
-        private sealed class EditModeOverlayControl : Control
-        {
-            protected override CreateParams CreateParams
-            {
-                get
-                {
-                    const int WS_EX_TRANSPARENT = 0x20;
-                    var createParams = base.CreateParams;
-                    // Let underlying controls paint first so only border strokes are visible.
-                    createParams.ExStyle |= WS_EX_TRANSPARENT;
-                    return createParams;
-                }
-            }
-
-            protected override void OnPaintBackground(PaintEventArgs pevent)
-            {
-                // Keep the overlay background clear so only the border is rendered.
-            }
-
-            protected override void OnPaint(PaintEventArgs e)
-            {
-                base.OnPaint(e);
-
-                var borderRect = new Rectangle(1, 1, Math.Max(1, Width - 3), Math.Max(1, Height - 3));
-                if (borderRect.Width <= 0 || borderRect.Height <= 0)
-                {
-                    return;
-                }
-
-                using (var pen = new Pen(Color.Yellow))
-                {
-                    pen.DashStyle = System.Drawing.Drawing2D.DashStyle.Dash;
-                    e.Graphics.DrawRectangle(pen, borderRect);
-                }
-            }
-
-            protected override void WndProc(ref Message m)
-            {
-                const int WM_NCHITTEST = 0x84;
-                const int HTTRANSPARENT = -1;
-
-                if (m.Msg == WM_NCHITTEST)
-                {
-                    // Make overlay mouse-transparent so drag/drop and clicks reach tiles/buttons.
-                    m.Result = (IntPtr)HTTRANSPARENT;
-                    return;
-                }
-
-                base.WndProc(ref m);
-            }
-        }
     }
 }

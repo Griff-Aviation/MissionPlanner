@@ -28,8 +28,7 @@ namespace MissionPlanner.MavlinkDashboard
                 return true;
             }
 
-            var resolvedField = ResolveFieldForInstance(key.Field, key.InstanceId);
-            if (!TryReadField(currentState, resolvedField, out var label, out var formattedValue, out var units))
+            if (!TryReadField(currentState, key.Field, out var label, out var formattedValue, out var units))
             {
                 return false;
             }
@@ -265,39 +264,6 @@ namespace MissionPlanner.MavlinkDashboard
             return true;
         }
 
-        private static string ResolveFieldForInstance(string field, int? instanceId)
-        {
-            if (string.IsNullOrWhiteSpace(field) || !instanceId.HasValue)
-            {
-                return field;
-            }
-
-            var normalized = field.ToUpperInvariant();
-            var battery1 = instanceId.Value <= 0;
-
-            if (normalized == "BATTERY1_VOLTAGE" || normalized == "BATTERY2_VOLTAGE")
-            {
-                return battery1 ? "BATTERY1_VOLTAGE" : "BATTERY2_VOLTAGE";
-            }
-
-            if (normalized == "BATTERY1_REMAINING" || normalized == "BATTERY2_REMAINING")
-            {
-                return battery1 ? "BATTERY1_REMAINING" : "BATTERY2_REMAINING";
-            }
-
-            if (normalized == "BATTERY_VOLTAGE" || normalized == "BATTERY_VOLTAGE2")
-            {
-                return battery1 ? "battery_voltage" : "battery_voltage2";
-            }
-
-            if (normalized == "BATTERY_REMAINING" || normalized == "BATTERY_REMAINING2")
-            {
-                return battery1 ? "battery_remaining" : "battery_remaining2";
-            }
-
-            return field;
-        }
-
         private static bool IsNumericType(Type type)
         {
             switch (Type.GetTypeCode(type))
@@ -375,8 +341,7 @@ namespace MissionPlanner.MavlinkDashboard
 
         private static string GetTrackerKey(FieldKey key)
         {
-            var instance = key.InstanceId.HasValue ? key.InstanceId.Value.ToString() : "default";
-            return (key.Message ?? string.Empty) + ":" + (key.Field ?? string.Empty) + ":" + instance;
+            return (key.Message ?? string.Empty) + ":" + (key.Field ?? string.Empty);
         }
 
         private static FieldValue CreateInactiveValue(string field)
