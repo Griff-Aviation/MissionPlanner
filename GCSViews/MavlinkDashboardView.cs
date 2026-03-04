@@ -18,8 +18,8 @@ namespace MissionPlanner.GCSViews
         private readonly IFieldValueSource fieldValueSource = new CurrentStateFieldValueSource();
         // Keep config metadata and runtime control together so tile order/state stays in sync.
         private readonly List<(DashboardTileConfig Config, TelemetryTileControl Tile)> tiles = new List<(DashboardTileConfig Config, TelemetryTileControl Tile)>();
-        private readonly Button buttonSaveFavorite = new Button();
-        private readonly Button buttonApplyFavorite = new Button();
+        private readonly Button buttonSaveConfig = new Button();
+        private readonly Button buttonApplySavedConfig = new Button();
         private readonly ContextMenuStrip tileContextMenu = new ContextMenuStrip();
         private readonly ToolStripMenuItem configureTileMenuItem = new ToolStripMenuItem("Configure...");
         private readonly ToolStripMenuItem removeTileMenuItem = new ToolStripMenuItem("Remove");
@@ -67,8 +67,8 @@ namespace MissionPlanner.GCSViews
         public MavlinkDashboardView()
         {
             InitializeComponent();
-            InitializeSaveFavoriteButton();
-            InitializeApplyFavoriteButton();
+            InitializeSaveConfigButton();
+            InitializeApplySavedConfigButton();
             InitializeExplorerButton();
             InitializeDisconnectStatusTextBox();
             InitializeTileContextMenu();
@@ -286,37 +286,37 @@ namespace MissionPlanner.GCSViews
             RefreshExplorerFieldSelectionState();
         }
 
-        private void InitializeSaveFavoriteButton()
+        private void InitializeSaveConfigButton()
         {
-            buttonSaveFavorite.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonSaveFavorite.Location = new Point(3, 6);
-            buttonSaveFavorite.Name = "buttonSaveFavorite";
-            buttonSaveFavorite.Size = new Size(95, 23);
-            buttonSaveFavorite.TabIndex = 1;
-            buttonSaveFavorite.Text = "Save Favourite";
-            buttonSaveFavorite.UseVisualStyleBackColor = true;
-            buttonSaveFavorite.Click += buttonSaveFavorite_Click;
-            panelTop.Controls.Add(buttonSaveFavorite);
+            buttonSaveConfig.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonSaveConfig.Location = new Point(3, 6);
+            buttonSaveConfig.Name = "buttonSaveConfig";
+            buttonSaveConfig.Size = new Size(95, 23);
+            buttonSaveConfig.TabIndex = 1;
+            buttonSaveConfig.Text = "Save Config";
+            buttonSaveConfig.UseVisualStyleBackColor = true;
+            buttonSaveConfig.Click += buttonSaveConfig_Click;
+            panelTop.Controls.Add(buttonSaveConfig);
         }
 
-        private void InitializeApplyFavoriteButton()
+        private void InitializeApplySavedConfigButton()
         {
-            buttonApplyFavorite.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonApplyFavorite.Location = new Point(101, 6);
-            buttonApplyFavorite.Name = "buttonApplyFavorite";
-            buttonApplyFavorite.Size = new Size(95, 23);
-            buttonApplyFavorite.TabIndex = 2;
-            buttonApplyFavorite.Text = "Apply Favourite";
-            buttonApplyFavorite.UseVisualStyleBackColor = true;
-            buttonApplyFavorite.Click += buttonApplyFavorite_Click;
-            panelTop.Controls.Add(buttonApplyFavorite);
+            buttonApplySavedConfig.Anchor = AnchorStyles.Top | AnchorStyles.Left;
+            buttonApplySavedConfig.Location = new Point(101, 6);
+            buttonApplySavedConfig.Name = "buttonApplySavedConfig";
+            buttonApplySavedConfig.Size = new Size(130, 23);
+            buttonApplySavedConfig.TabIndex = 2;
+            buttonApplySavedConfig.Text = "Apply Saved Config";
+            buttonApplySavedConfig.UseVisualStyleBackColor = true;
+            buttonApplySavedConfig.Click += buttonApplySavedConfig_Click;
+            panelTop.Controls.Add(buttonApplySavedConfig);
         }
 
         private void InitializeExplorerButton()
         {
             // Explorer is always available and opens in a separate modeless window.
             buttonExplorer.Anchor = AnchorStyles.Top | AnchorStyles.Left;
-            buttonExplorer.Location = new Point(200, 6);
+            buttonExplorer.Location = new Point(235, 6);
             buttonExplorer.Name = "buttonExplorer";
             buttonExplorer.Size = new Size(70, 23);
             buttonExplorer.TabIndex = 3;
@@ -457,23 +457,24 @@ namespace MissionPlanner.GCSViews
             explorerWindow.UpdateCurrentStatePreviewValues(MainV2.comPort?.MAV?.cs);
         }
 
-        private void buttonSaveFavorite_Click(object sender, EventArgs e)
+        private void buttonSaveConfig_Click(object sender, EventArgs e)
         {
             SaveDashboardConfig();
-            dashboardConfig.FavoriteTiles = CloneTileConfigList(dashboardConfig.Tiles);
-            dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+            dashboardConfig.SavedTiles = CloneTileConfigList(dashboardConfig.Tiles);
+            dashboardConfig.SavedLayout = CloneLayoutConfig(dashboardConfig.Layout);
             DashboardConfigStore.Save(dashboardConfig);
+            ShowSaveButtonFeedback(buttonSaveConfig, "Save Config");
         }
 
-        private void buttonApplyFavorite_Click(object sender, EventArgs e)
+        private void buttonApplySavedConfig_Click(object sender, EventArgs e)
         {
-            if (dashboardConfig?.FavoriteTiles == null || dashboardConfig.FavoriteTiles.Count == 0)
+            if (dashboardConfig?.SavedTiles == null || dashboardConfig.SavedTiles.Count == 0)
             {
                 return;
             }
 
-            dashboardConfig.Tiles = CloneTileConfigList(dashboardConfig.FavoriteTiles);
-            dashboardConfig.Layout = CloneLayoutConfig(dashboardConfig.FavoriteLayout) ?? dashboardConfig.Layout;
+            dashboardConfig.Tiles = CloneTileConfigList(dashboardConfig.SavedTiles);
+            dashboardConfig.Layout = CloneLayoutConfig(dashboardConfig.SavedLayout) ?? dashboardConfig.Layout;
             ApplyDashboardConfig(dashboardConfig);
             SaveDashboardConfig();
             RefreshTiles();
@@ -810,7 +811,6 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
-            UpsertFavoriteTileConfig(config);
             RefreshTiles();
             SaveDashboardConfig();
             RefreshExplorerFieldSelectionState();
@@ -1025,17 +1025,18 @@ namespace MissionPlanner.GCSViews
                     Dock = DockStyle.Fill,
                     Padding = new Padding(10),
                     ColumnCount = 2,
-                    RowCount = 7
+                    RowCount = 8
                 };
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 90));
                 layout.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+                layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 40));
 
-                AddConfigRow(layout, 0, "Label", textLabel);
-                AddConfigRow(layout, 1, "Units", textUnits);
-                AddConfigRow(layout, 2, "Value color", colorEditor);
-                AddConfigRow(layout, 3, "Decimal pts", decimalsEditor);
-                AddConfigRow(layout, 4, "Warning", warningEditor);
-                AddConfigRow(layout, 5, "Critical", criticalEditor);
+                AddConfigRow(layout, 1, "Label", textLabel);
+                AddConfigRow(layout, 2, "Units", textUnits);
+                AddConfigRow(layout, 3, "Value color", colorEditor);
+                AddConfigRow(layout, 4, "Decimal pts", decimalsEditor);
+                AddConfigRow(layout, 5, "Warning", warningEditor);
+                AddConfigRow(layout, 6, "Critical", criticalEditor);
                 layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 32));
 
                 var buttonPanel = new FlowLayoutPanel
@@ -1050,23 +1051,25 @@ namespace MissionPlanner.GCSViews
                 };
 
                 var buttonOk = new Button { Text = "OK", DialogResult = DialogResult.OK, AutoSize = true };
-                var buttonCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Cancel, AutoSize = true };
+                var buttonCancel = new Button { Text = "Cancel", DialogResult = DialogResult.Abort, AutoSize = true };
                 var buttonResetDefaults = new Button { Text = "Reset", AutoSize = true };
-                var buttonSaveFavoriteConfig = new Button { Text = "Save Fav", AutoSize = true };
-                var buttonApplyFavoriteConfig = new Button
+                var buttonSaveConfig = new Button { Text = "Save Config", AutoSize = true };
+                var buttonApplySavedConfig = new Button
                 {
-                    Text = "Apply Fav",
+                    Text = "Apply Saved Config",
                     AutoSize = true,
-                    Enabled = FindFavoriteTileConfig(config.FieldKey) != null
+                    Enabled = FindSavedTileConfig(config.FieldKey) != null
                 };
                 buttonPanel.Controls.Add(buttonOk);
                 buttonPanel.Controls.Add(buttonCancel);
                 buttonPresetPanel.Controls.Add(buttonResetDefaults);
-                buttonPresetPanel.Controls.Add(buttonSaveFavoriteConfig);
-                buttonPresetPanel.Controls.Add(buttonApplyFavoriteConfig);
-
-                layout.Controls.Add(buttonPresetPanel, 0, 6);
-                layout.Controls.Add(buttonPanel, 1, 6);
+                buttonPresetPanel.Controls.Add(buttonSaveConfig);
+                buttonPresetPanel.Controls.Add(buttonApplySavedConfig);
+                buttonPresetPanel.WrapContents = false;
+                buttonPanel.WrapContents = false;
+                layout.Controls.Add(buttonPresetPanel, 0, 0);
+                layout.SetColumnSpan(buttonPresetPanel, 2);
+                layout.Controls.Add(buttonPanel, 1, 7);
 
                 dialog.Controls.Add(layout);
                 dialog.AcceptButton = buttonOk;
@@ -1158,7 +1161,7 @@ namespace MissionPlanner.GCSViews
                     });
                     refreshPreview();
                 };
-                buttonSaveFavoriteConfig.Click += (s, e) =>
+                buttonSaveConfig.Click += (s, e) =>
                 {
                     if (!applyEditorValuesToConfig(true))
                     {
@@ -1167,25 +1170,27 @@ namespace MissionPlanner.GCSViews
                         return;
                     }
 
-                    // Config dialog favorites write into the same dashboard favorite set.
-                    UpsertFavoriteTileConfig(config);
-                    dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+                    // Config dialog saves write into the same dashboard saved-config set.
+                    UpsertSavedTileConfig(config);
+                    dashboardConfig.SavedLayout = CloneLayoutConfig(dashboardConfig.Layout);
                     DashboardConfigStore.Save(dashboardConfig);
-                    buttonApplyFavoriteConfig.Enabled = true;
+                    buttonApplySavedConfig.Enabled = true;
+                    ShowSaveButtonFeedback(buttonSaveConfig, "Save Config");
                 };
-                buttonApplyFavoriteConfig.Click += (s, e) =>
+                buttonApplySavedConfig.Click += (s, e) =>
                 {
-                    var favoriteConfig = FindFavoriteTileConfig(config.FieldKey);
-                    if (favoriteConfig == null)
+                    var savedConfig = FindSavedTileConfig(config.FieldKey);
+                    if (savedConfig == null)
                     {
                         return;
                     }
 
-                    loadEditorsFromConfig(favoriteConfig);
+                    loadEditorsFromConfig(savedConfig);
                     refreshPreview();
                 };
 
-                if (dialog.ShowDialog(this) != DialogResult.OK)
+                var dialogResult = dialog.ShowDialog(this);
+                if (dialogResult == DialogResult.Abort)
                 {
                     // Cancel discards transient preview edits applied while typing.
                     CopyTileConfig(originalConfig, config);
@@ -1193,7 +1198,7 @@ namespace MissionPlanner.GCSViews
                     return false;
                 }
 
-                if (!applyEditorValuesToConfig(true))
+                if (dialogResult == DialogResult.OK && !applyEditorValuesToConfig(true))
                 {
                     CopyTileConfig(originalConfig, config);
                     RefreshTiles();
@@ -1214,6 +1219,27 @@ namespace MissionPlanner.GCSViews
             }
 
             return value.Trim();
+        }
+
+        private static void ShowSaveButtonFeedback(Button button, string restoreText)
+        {
+            if (button == null || button.IsDisposed)
+            {
+                return;
+            }
+
+            button.Text = "Saved";
+            var timer = new Timer { Interval = 900 };
+            timer.Tick += (s, e) =>
+            {
+                timer.Stop();
+                timer.Dispose();
+                if (!button.IsDisposed)
+                {
+                    button.Text = restoreText;
+                }
+            };
+            timer.Start();
         }
 
         private void GetDefaultTileTextValues(DashboardTileConfig config, out string label, out string units)
@@ -1712,57 +1738,57 @@ namespace MissionPlanner.GCSViews
             return null;
         }
 
-        private DashboardTileConfig FindFavoriteTileConfig(FieldKey fieldKey)
+        private DashboardTileConfig FindSavedTileConfig(FieldKey fieldKey)
         {
-            if (dashboardConfig?.FavoriteTiles == null)
+            if (dashboardConfig?.SavedTiles == null)
             {
                 return null;
             }
 
-            foreach (var favorite in dashboardConfig.FavoriteTiles)
+            foreach (var saved in dashboardConfig.SavedTiles)
             {
-                if (favorite?.FieldKey != null && FieldKeyEquals(favorite.FieldKey, fieldKey))
+                if (saved?.FieldKey != null && FieldKeyEquals(saved.FieldKey, fieldKey))
                 {
-                    return favorite;
+                    return saved;
                 }
             }
 
             return null;
         }
 
-        private void UpsertFavoriteTileConfig(DashboardTileConfig sourceConfig)
+        private void UpsertSavedTileConfig(DashboardTileConfig sourceConfig)
         {
             if (dashboardConfig == null || sourceConfig?.FieldKey == null)
             {
                 return;
             }
 
-            if (dashboardConfig.FavoriteLayout == null)
+            if (dashboardConfig.SavedLayout == null)
             {
-                dashboardConfig.FavoriteLayout = CloneLayoutConfig(dashboardConfig.Layout);
+                dashboardConfig.SavedLayout = CloneLayoutConfig(dashboardConfig.Layout);
             }
 
-            if (dashboardConfig.FavoriteTiles == null || dashboardConfig.FavoriteTiles.Count == 0)
+            if (dashboardConfig.SavedTiles == null || dashboardConfig.SavedTiles.Count == 0)
             {
-                dashboardConfig.FavoriteTiles = CloneTileConfigList(dashboardConfig.Tiles);
+                dashboardConfig.SavedTiles = CloneTileConfigList(dashboardConfig.Tiles);
             }
 
-            var favoriteTiles = dashboardConfig.FavoriteTiles;
-            for (var i = 0; i < favoriteTiles.Count; i++)
+            var savedTiles = dashboardConfig.SavedTiles;
+            for (var i = 0; i < savedTiles.Count; i++)
             {
-                var favorite = favoriteTiles[i];
-                if (favorite?.FieldKey == null || !FieldKeyEquals(favorite.FieldKey, sourceConfig.FieldKey))
+                var saved = savedTiles[i];
+                if (saved?.FieldKey == null || !FieldKeyEquals(saved.FieldKey, sourceConfig.FieldKey))
                 {
                     continue;
                 }
 
                 var replacement = CloneTileConfig(sourceConfig);
-                replacement.IsVisible = favorite.IsVisible;
-                favoriteTiles[i] = replacement;
+                replacement.IsVisible = saved.IsVisible;
+                savedTiles[i] = replacement;
                 return;
             }
 
-            favoriteTiles.Add(CloneTileConfig(sourceConfig));
+            savedTiles.Add(CloneTileConfig(sourceConfig));
         }
 
         private static DashboardTileConfig CloneTileConfig(DashboardTileConfig source)

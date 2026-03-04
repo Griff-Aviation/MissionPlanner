@@ -394,13 +394,13 @@ namespace MissionPlanner.MavlinkDashboard
                 case "GPS_SATS":
                     return "GPS Sats";
                 case "BATTERY1_VOLTAGE":
-                    return "Battery 1 V";
+                    return "Battery 1 Voltage";
                 case "BATTERY1_REMAINING":
-                    return "Battery 1 %";
+                    return "Battery 1 Remaining";
                 case "BATTERY2_VOLTAGE":
-                    return "Battery 2 V";
+                    return "Battery 2 Voltage";
                 case "BATTERY2_REMAINING":
-                    return "Battery 2 %";
+                    return "Battery 2 Remaining";
                 case "LINK_QUALITY":
                     return "Link";
                 case "RSSI":

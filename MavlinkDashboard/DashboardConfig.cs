@@ -15,10 +15,26 @@ namespace MissionPlanner.MavlinkDashboard
     public class DashboardConfig
     {
         public List<DashboardTileConfig> Tiles { get; set; } = new List<DashboardTileConfig>();
-        public List<DashboardTileConfig> FavoriteTiles { get; set; }
+        public List<DashboardTileConfig> SavedTiles { get; set; }
         public DashboardLayoutConfig Layout { get; set; } = new DashboardLayoutConfig();
-        public DashboardLayoutConfig FavoriteLayout { get; set; }
+        public DashboardLayoutConfig SavedLayout { get; set; }
         public DashboardGlobalOptions GlobalOptions { get; set; } = new DashboardGlobalOptions();
+
+        // Backward compatibility for older config files.
+        [JsonProperty("FavoriteTiles")]
+        private List<DashboardTileConfig> LegacySavedTilesFromOldConfig
+        {
+            get => SavedTiles;
+            set => SavedTiles = value;
+        }
+
+        // Backward compatibility for older config files.
+        [JsonProperty("FavoriteLayout")]
+        private DashboardLayoutConfig LegacySavedLayoutFromOldConfig
+        {
+            get => SavedLayout;
+            set => SavedLayout = value;
+        }
     }
 
     public class DashboardTileConfig
@@ -117,9 +133,9 @@ namespace MissionPlanner.MavlinkDashboard
             }
 
             config.Tiles = NormalizeTiles(config.Tiles ?? new List<DashboardTileConfig>());
-            if (config.FavoriteTiles != null)
+            if (config.SavedTiles != null)
             {
-                config.FavoriteTiles = NormalizeTiles(config.FavoriteTiles);
+                config.SavedTiles = NormalizeTiles(config.SavedTiles);
             }
 
             config.Layout = config.Layout ?? new DashboardLayoutConfig();
