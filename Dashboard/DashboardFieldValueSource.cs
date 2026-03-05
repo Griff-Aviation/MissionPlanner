@@ -3,9 +3,9 @@ using System.Collections.Generic;
 using System.Globalization;
 using System.Reflection;
 
-namespace MissionPlanner.MavlinkDashboard
+namespace MissionPlanner.Dashboard
 {
-    public class CurrentStateFieldValueSource : IFieldValueSource
+    public class DashboardFieldValueSource : IFieldValueSource
     {
         private static readonly TimeSpan SoftStaleThreshold = TimeSpan.FromSeconds(2);
         private static readonly TimeSpan InactiveThreshold = TimeSpan.FromSeconds(5);
@@ -33,7 +33,7 @@ namespace MissionPlanner.MavlinkDashboard
                 return false;
             }
 
-            var sampleTimestampUtc = GetCurrentStateTimestampUtc(currentState);
+            var sampleTimestampUtc = GetSampleTimestampUtc(currentState);
             if (!sampleTimestampUtc.HasValue)
             {
                 value = CreateInactiveValue(key.Field);
@@ -198,11 +198,11 @@ namespace MissionPlanner.MavlinkDashboard
                     }
                     return true;
                 default:
-                    return TryReadGenericCurrentStateField(currentState, field, out label, out formattedValue, out units);
+                    return TryReadGenericField(currentState, field, out label, out formattedValue, out units);
             }
         }
 
-        private static bool TryReadGenericCurrentStateField(CurrentState currentState, string field, out string label, out string formattedValue, out string units)
+        private static bool TryReadGenericField(CurrentState currentState, string field, out string label, out string formattedValue, out string units)
         {
             label = GetLabel(field);
             formattedValue = "-";
@@ -319,7 +319,7 @@ namespace MissionPlanner.MavlinkDashboard
             }
         }
 
-        private static DateTime? GetCurrentStateTimestampUtc(CurrentState currentState)
+        private static DateTime? GetSampleTimestampUtc(CurrentState currentState)
         {
             var timestamp = currentState.datetime;
             if (timestamp <= DateTime.MinValue.AddSeconds(1))

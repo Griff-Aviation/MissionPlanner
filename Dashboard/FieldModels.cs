@@ -1,6 +1,6 @@
 using System;
 
-namespace MissionPlanner.MavlinkDashboard
+namespace MissionPlanner.Dashboard
 {
     public enum FieldState
     {

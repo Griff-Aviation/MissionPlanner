@@ -1,7 +1,7 @@
 using System.Drawing;
 using System.Windows.Forms;
 
-using MissionPlanner.MavlinkDashboard;
+using MissionPlanner.Dashboard;
 using MissionPlanner.Utilities;
 
 namespace MissionPlanner.Controls

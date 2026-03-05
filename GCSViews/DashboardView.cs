@@ -1,5 +1,5 @@
 using MissionPlanner.Controls;
-using MissionPlanner.MavlinkDashboard;
+using MissionPlanner.Dashboard;
 using System;
 using System.ComponentModel;
 using System.Collections.Generic;
@@ -10,12 +10,12 @@ using System.Windows.Forms;
 
 namespace MissionPlanner.GCSViews
 {
-    public partial class MavlinkDashboardView : MyUserControl
+    public partial class DashboardView : MyUserControl
     {
         public event EventHandler PopOutRequested;
         public event EventHandler PopInRequested;
         private bool isPoppedOut;
-        private readonly IFieldValueSource fieldValueSource = new CurrentStateFieldValueSource();
+        private readonly IFieldValueSource fieldValueSource = new DashboardFieldValueSource();
         // Keep config metadata and runtime control together so tile order/state stays in sync.
         private readonly List<(DashboardTileConfig Config, TelemetryTileControl Tile)> tiles = new List<(DashboardTileConfig Config, TelemetryTileControl Tile)>();
         private readonly Button buttonSaveConfig = new Button();
@@ -64,7 +64,7 @@ namespace MissionPlanner.GCSViews
         private bool hasSeenAircraftConnection;
         private bool showDisconnectBorder;
 
-        public MavlinkDashboardView()
+        public DashboardView()
         {
             InitializeComponent();
             InitializeSaveConfigButton();
@@ -78,7 +78,7 @@ namespace MissionPlanner.GCSViews
             LoadDashboardConfig();
             RefreshTiles();
             UpdateDisconnectBorderState();
-            Disposed += MavlinkDashboardView_Disposed;
+            Disposed += DashboardView_Disposed;
         }
 
         private void buttonPopOut_Click(object sender, EventArgs e)
@@ -453,8 +453,8 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
-            // Explorer previews are sourced from CurrentState (same model used by "Display This").
-            explorerWindow.UpdateCurrentStatePreviewValues(MainV2.comPort?.MAV?.cs);
+            // Explorer previews are sourced from live telemetry fields (same model used by "Display This").
+            explorerWindow.UpdatePreviewValues(MainV2.comPort?.MAV?.cs);
         }
 
         private void buttonSaveConfig_Click(object sender, EventArgs e)
@@ -824,7 +824,7 @@ namespace MissionPlanner.GCSViews
             }
         }
 
-        private void MavlinkDashboardView_Disposed(object sender, EventArgs e)
+        private void DashboardView_Disposed(object sender, EventArgs e)
         {
             if (explorerWindow != null && !explorerWindow.IsDisposed)
             {
@@ -1745,18 +1745,18 @@ namespace MissionPlanner.GCSViews
 
             var leftMessage = left.Message ?? string.Empty;
             var rightMessage = right.Message ?? string.Empty;
-            var useCurrentStateAlias =
+            var useAlias =
                 string.Equals(leftMessage, "CURRENT_STATE", StringComparison.OrdinalIgnoreCase) ||
                 string.Equals(rightMessage, "CURRENT_STATE", StringComparison.OrdinalIgnoreCase);
 
-            var leftField = useCurrentStateAlias ? NormalizeCurrentStateFieldName(left.Field) : (left.Field ?? string.Empty);
-            var rightField = useCurrentStateAlias ? NormalizeCurrentStateFieldName(right.Field) : (right.Field ?? string.Empty);
+            var leftField = useAlias ? NormalizeFieldName(left.Field) : (left.Field ?? string.Empty);
+            var rightField = useAlias ? NormalizeFieldName(right.Field) : (right.Field ?? string.Empty);
 
             return string.Equals(leftMessage, rightMessage, StringComparison.OrdinalIgnoreCase)
                 && string.Equals(leftField, rightField, StringComparison.OrdinalIgnoreCase);
         }
 
-        private static string NormalizeCurrentStateFieldName(string fieldName)
+        private static string NormalizeFieldName(string fieldName)
         {
             if (string.IsNullOrWhiteSpace(fieldName))
             {
@@ -1991,7 +1991,7 @@ namespace MissionPlanner.GCSViews
 
         private sealed class ExplorerWindowForm : Form
         {
-            private const string CurrentStateMessageName = "CURRENT_STATE";
+            private const string FieldMessageName = "CURRENT_STATE";
 
             private sealed class FieldEntry
             {
@@ -2035,7 +2035,7 @@ namespace MissionPlanner.GCSViews
             private readonly Func<FieldKey, string> getFieldLabelOverride;
             private bool suppressFieldListEvents;
             private int lastCustomFieldNameCount = -1;
-            private bool hasCurrentStateDisplayNames;
+            private bool hasDisplayNames;
             private bool showAllFieldTypes;
 
             public ExplorerWindowForm(Func<FieldKey, bool> isFieldTileSelected, Action<FieldKey, bool> fieldCheckedChanged,
@@ -2046,7 +2046,7 @@ namespace MissionPlanner.GCSViews
                 this.getFieldLabelOverride = getFieldLabelOverride;
 
                 Text = "Dashboard Fields";
-                Name = "mavlinkExplorerWindow";
+                Name = "dashboardExplorerWindow";
                 StartPosition = FormStartPosition.CenterParent;
                 MinimumSize = new Size(280, 360);
                 Size = new Size(320, 540);
@@ -2130,7 +2130,7 @@ namespace MissionPlanner.GCSViews
                 {
                     for (var i = 0; i < visibleFields.Count && i < fieldList.Items.Count; i++)
                     {
-                        var fieldKey = CreateCurrentStateFieldKey(visibleFields[i].FieldName);
+                        var fieldKey = CreateFieldKey(visibleFields[i].FieldName);
                         var shouldBeChecked = isFieldTileSelected != null && isFieldTileSelected(fieldKey);
                         if (fieldList.GetItemChecked(i) != shouldBeChecked)
                         {
@@ -2144,7 +2144,7 @@ namespace MissionPlanner.GCSViews
                 }
             }
 
-            public void UpdateCurrentStatePreviewValues(CurrentState currentState)
+            public void UpdatePreviewValues(CurrentState currentState)
             {
                 if (currentState == null)
                 {
@@ -2153,7 +2153,7 @@ namespace MissionPlanner.GCSViews
 
                 // Rebuild when CurrentState descriptions become available or custom labels change.
                 var customFieldCount = GetCustomFieldNameCount();
-                if (!hasCurrentStateDisplayNames || customFieldCount != lastCustomFieldNameCount)
+                if (!hasDisplayNames || customFieldCount != lastCustomFieldNameCount)
                 {
                     BuildFieldCatalog(currentState);
                     ApplyFilterAndRebind();
@@ -2196,7 +2196,7 @@ namespace MissionPlanner.GCSViews
 
                 // Explorer checkboxes are the single source of truth for showing/hiding dashboard tiles.
                 var entry = visibleFields[e.Index];
-                var fieldKey = CreateCurrentStateFieldKey(entry.FieldName);
+                var fieldKey = CreateFieldKey(entry.FieldName);
                 var isChecked = e.NewValue == CheckState.Checked;
                 BeginInvoke((Action) (() => fieldCheckedChanged?.Invoke(fieldKey, isChecked)));
             }
@@ -2313,7 +2313,7 @@ namespace MissionPlanner.GCSViews
 
                 allFields.Sort((left, right) => CurrentState.StringCompareTo(left.DisplayName, right.DisplayName));
                 lastCustomFieldNameCount = GetCustomFieldNameCount();
-                hasCurrentStateDisplayNames = currentState != null;
+                hasDisplayNames = currentState != null;
             }
 
             private void ApplyFilterAndRebind()
@@ -2431,7 +2431,7 @@ namespace MissionPlanner.GCSViews
                     return null;
                 }
 
-                var fieldKey = CreateCurrentStateFieldKey(fieldName);
+                var fieldKey = CreateFieldKey(fieldName);
                 var label = getFieldLabelOverride(fieldKey);
                 return string.IsNullOrWhiteSpace(label) ? null : label.Trim();
             }
@@ -2448,12 +2448,12 @@ namespace MissionPlanner.GCSViews
                 }
             }
 
-            private static FieldKey CreateCurrentStateFieldKey(string fieldName)
+            private static FieldKey CreateFieldKey(string fieldName)
             {
                 // CURRENT_STATE is the canonical namespace for dashboard fields sourced from CurrentState.
                 return new FieldKey
                 {
-                    Message = CurrentStateMessageName,
+                    Message = FieldMessageName,
                     Field = fieldName
                 };
             }

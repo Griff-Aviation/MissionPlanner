@@ -1,6 +1,6 @@
 namespace MissionPlanner.GCSViews
 {
-    partial class MavlinkDashboardView
+    partial class DashboardView
     {
         private System.ComponentModel.IContainer components = null;
 
@@ -62,11 +62,11 @@ namespace MissionPlanner.GCSViews
             this.uiTickTimer.Interval = 150;
             this.uiTickTimer.Tick += new System.EventHandler(this.uiTickTimer_Tick);
             // 
-            // MavlinkDashboardView
+            // DashboardView
             // 
             this.Controls.Add(this.flowLayoutPanelTiles);
             this.Controls.Add(this.panelTop);
-            this.Name = "MavlinkDashboardView";
+            this.Name = "DashboardView";
             this.panelTop.ResumeLayout(false);
             this.ResumeLayout(false);
         }

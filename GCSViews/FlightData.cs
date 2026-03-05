@@ -161,8 +161,8 @@ namespace MissionPlanner.GCSViews
 
         public readonly List<TabPage> TabListOriginal = new List<TabPage>();
         public Dictionary<string,bool> TabListDisplay = new Dictionary<string, bool>();
-        private readonly TabPage tabMavlinkDashboard = new TabPage();
-        private readonly MavlinkDashboardView mavlinkDashboardView = new MavlinkDashboardView();
+        private readonly TabPage tabDashboard = new TabPage();
+        private readonly DashboardView dashboardView = new DashboardView();
         private readonly ToolStripMenuItem popOutTabToolStripMenuItem = new ToolStripMenuItem("Pop Out");
         private TabPage tabContextMenuTarget;
 
@@ -244,13 +244,13 @@ namespace MissionPlanner.GCSViews
             log.Info("Ctor Start");
 
             InitializeComponent();
-            InitializeMavlinkDashboardTab();
+            InitializeDashboardTab();
             popOutTabToolStripMenuItem.Name = "popOutTabToolStripMenuItem";
             popOutTabToolStripMenuItem.Click += popOutTabToolStripMenuItem_Click;
             contextMenuStripactionstab.Items.Insert(0, popOutTabToolStripMenuItem);
             contextMenuStripactionstab.Opening += contextMenuStripactionstab_Opening;
-            mavlinkDashboardView.PopOutRequested += MavlinkDashboardView_PopOutRequested;
-            mavlinkDashboardView.PopInRequested += MavlinkDashboardView_PopInRequested;
+            dashboardView.PopOutRequested += DashboardView_PopOutRequested;
+            dashboardView.PopInRequested += DashboardView_PopInRequested;
 
             log.Info("Components Done");
 
@@ -436,20 +436,20 @@ namespace MissionPlanner.GCSViews
 
         }
 
-        private void InitializeMavlinkDashboardTab()
+        private void InitializeDashboardTab()
         {
-            tabMavlinkDashboard.Name = "tabMavlinkDashboard";
-            tabMavlinkDashboard.Text = "MAVLink Dashboard";
-            tabMavlinkDashboard.UseVisualStyleBackColor = true;
+            tabDashboard.Name = "tabDashboard";
+            tabDashboard.Text = "Dashboard";
+            tabDashboard.UseVisualStyleBackColor = true;
 
-            mavlinkDashboardView.Name = "mavlinkDashboardView";
-            mavlinkDashboardView.Dock = DockStyle.Fill;
+            dashboardView.Name = "dashboardView";
+            dashboardView.Dock = DockStyle.Fill;
 
-            tabMavlinkDashboard.Controls.Add(mavlinkDashboardView);
+            tabDashboard.Controls.Add(dashboardView);
 
             var quickTabIndex = tabControlactions.TabPages.IndexOf(tabQuick);
             var insertIndex = quickTabIndex >= 0 ? quickTabIndex + 1 : 0;
-            tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
+            tabControlactions.TabPages.Insert(insertIndex, tabDashboard);
         }
 
         public void Activate()
@@ -571,7 +571,7 @@ namespace MissionPlanner.GCSViews
 
             // update tabs displayed
             updateDisplayView();
-            RestoreMavlinkDashboardDetachedState();
+            RestoreDashboardDetachedState();
 
             hud1.doResize();
         }
@@ -799,11 +799,11 @@ namespace MissionPlanner.GCSViews
                 tabControlactions.SelectedIndex = 0;
             }
 
-            if (!tabMavlinkDashboardDetached && !tabControlactions.TabPages.Contains(tabMavlinkDashboard))
+            if (!tabDashboardDetached && !tabControlactions.TabPages.Contains(tabDashboard))
             {
                 var quickIndex = tabControlactions.TabPages.IndexOf(tabQuick);
                 var insertIndex = quickIndex >= 0 ? quickIndex + 1 : 0;
-                tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
+                tabControlactions.TabPages.Insert(insertIndex, tabDashboard);
             }
 
             ThemeManager.ApplyThemeTo(tabControlactions);
@@ -2627,20 +2627,20 @@ namespace MissionPlanner.GCSViews
             }
         }
 
-        private void MavlinkDashboardView_PopOutRequested(object sender, EventArgs e)
+        private void DashboardView_PopOutRequested(object sender, EventArgs e)
         {
-            UndockMavlinkDashboardTab();
+            UndockDashboardTab();
         }
 
-        private void MavlinkDashboardView_PopInRequested(object sender, EventArgs e)
+        private void DashboardView_PopInRequested(object sender, EventArgs e)
         {
-            PopInMavlinkDashboardTab();
+            PopInDashboardTab();
         }
 
         private void contextMenuStripactionstab_Opening(object sender, CancelEventArgs e)
         {
             tabContextMenuTarget = GetTabAtPosition(tabControlactions.PointToClient(Cursor.Position));
-            popOutTabToolStripMenuItem.Visible = tabContextMenuTarget == tabQuick || tabContextMenuTarget == tabMavlinkDashboard;
+            popOutTabToolStripMenuItem.Visible = tabContextMenuTarget == tabQuick || tabContextMenuTarget == tabDashboard;
 
             if (tabContextMenuTarget != null)
             {
@@ -2671,9 +2671,9 @@ namespace MissionPlanner.GCSViews
                 return;
             }
 
-            if (targetTab == tabMavlinkDashboard)
+            if (targetTab == tabDashboard)
             {
-                UndockMavlinkDashboardTab();
+                UndockDashboardTab();
             }
         }
 
@@ -6221,9 +6221,9 @@ namespace MissionPlanner.GCSViews
             hud1.batterycellcount = iCellCount;
         }
         private bool tabQuickDetached = false;
-        private bool tabMavlinkDashboardDetached = false;
-        private const string MavlinkDashboardStartLocationKey = "MAVLink_Dashboard_StartLocation";
-        private const string MavlinkDashboardDetachedKey = "MAVLink_Dashboard_Detached";
+        private bool tabDashboardDetached = false;
+        private const string DashboardStartLocationKey = "Dashboard_StartLocation";
+        private const string DashboardDetachedKey = "Dashboard_Detached";
         private bool tuningwasrightclick;
 
         private void undockDockToolStripMenuItem_Click(object sender, EventArgs e)
@@ -6272,9 +6272,9 @@ namespace MissionPlanner.GCSViews
             contextMenuStripQuickView.Items["undockToolStripMenuItem"].Visible = true;
         }
 
-        private void UndockMavlinkDashboardTab()
+        private void UndockDashboardTab()
         {
-            if (tabMavlinkDashboardDetached)
+            if (tabDashboardDetached)
             {
                 return;
             }
@@ -6284,7 +6284,7 @@ namespace MissionPlanner.GCSViews
             dropout.FormBorderStyle = FormBorderStyle.Sizable;
             dropout.ShowInTaskbar = true;
             dropout.Size = new Size(980, 430);
-            tabMavlinkDashboardDetached = true;
+            tabDashboardDetached = true;
             tab.Appearance = TabAppearance.FlatButtons;
             tab.ItemSize = new Size(0, 0);
             tab.SizeMode = TabSizeMode.Fixed;
@@ -6293,53 +6293,53 @@ namespace MissionPlanner.GCSViews
 
             tab.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
 
-            dropout.Text = "MAVLink Dashboard";
-            tabControlactions.Controls.Remove(tabMavlinkDashboard);
-            tab.Controls.Add(tabMavlinkDashboard);
-            tabMavlinkDashboard.BorderStyle = BorderStyle.Fixed3D;
-            mavlinkDashboardView.SetPoppedOutState(true);
-            SaveMavlinkDashboardDetachedState(true);
-            dropout.FormClosed += dropoutMavlinkDashboard_FormClosed;
+            dropout.Text = "Dashboard";
+            tabControlactions.Controls.Remove(tabDashboard);
+            tab.Controls.Add(tabDashboard);
+            tabDashboard.BorderStyle = BorderStyle.Fixed3D;
+            dashboardView.SetPoppedOutState(true);
+            SaveDashboardDetachedState(true);
+            dropout.FormClosed += dropoutDashboard_FormClosed;
             dropout.Controls.Add(tab);
-            RestoreMavlinkDashboardStartupLocation(dropout);
+            RestoreDashboardStartupLocation(dropout);
             dropout.Show();
         }
 
-        private void PopInMavlinkDashboardTab()
+        private void PopInDashboardTab()
         {
-            if (!tabMavlinkDashboardDetached)
+            if (!tabDashboardDetached)
             {
                 return;
             }
 
-            var detachedWindow = tabMavlinkDashboard.FindForm();
+            var detachedWindow = tabDashboard.FindForm();
             if (detachedWindow != null)
             {
                 detachedWindow.Close();
             }
         }
 
-        void dropoutMavlinkDashboard_FormClosed(object sender, FormClosedEventArgs e)
+        void dropoutDashboard_FormClosed(object sender, FormClosedEventArgs e)
         {
-            SaveMavlinkDashboardStartupLocation(sender as Form);
-            SaveMavlinkDashboardDetachedState(IsApplicationCloseReason(e.CloseReason));
+            SaveDashboardStartupLocation(sender as Form);
+            SaveDashboardDetachedState(IsApplicationCloseReason(e.CloseReason));
 
             var quickIndex = tabControlactions.TabPages.IndexOf(tabQuick);
             var insertIndex = quickIndex >= 0 ? quickIndex + 1 : 0;
-            tabControlactions.TabPages.Insert(insertIndex, tabMavlinkDashboard);
-            tabControlactions.SelectedTab = tabMavlinkDashboard;
-            tabMavlinkDashboardDetached = false;
-            mavlinkDashboardView.SetPoppedOutState(false);
+            tabControlactions.TabPages.Insert(insertIndex, tabDashboard);
+            tabControlactions.SelectedTab = tabDashboard;
+            tabDashboardDetached = false;
+            dashboardView.SetPoppedOutState(false);
         }
 
-        private void RestoreMavlinkDashboardStartupLocation(Form form)
+        private void RestoreDashboardStartupLocation(Form form)
         {
             if (form == null)
             {
                 return;
             }
 
-            var value = Settings.Instance[MavlinkDashboardStartLocationKey];
+            var value = Settings.Instance[DashboardStartLocationKey];
 
             if (string.IsNullOrEmpty(value))
             {
@@ -6375,11 +6375,11 @@ namespace MissionPlanner.GCSViews
             }
             catch (Exception ex)
             {
-                log.Warn("Failed to restore MAVLink dashboard window location.", ex);
+                log.Warn("Failed to restore dashboard window location.", ex);
             }
         }
 
-        private void SaveMavlinkDashboardStartupLocation(Form form)
+        private void SaveDashboardStartupLocation(Form form)
         {
             if (form == null)
             {
@@ -6389,7 +6389,7 @@ namespace MissionPlanner.GCSViews
             var bounds = form.WindowState == FormWindowState.Normal ? form.Bounds : form.RestoreBounds;
             var state = form.WindowState == FormWindowState.Minimized ? FormWindowState.Normal : form.WindowState;
 
-            Settings.Instance[MavlinkDashboardStartLocationKey] = new ControlHelpers.FormStartLocation
+            Settings.Instance[DashboardStartLocationKey] = new ControlHelpers.FormStartLocation
             {
                 Location = bounds.Location,
                 Size = bounds.Size,
@@ -6397,26 +6397,26 @@ namespace MissionPlanner.GCSViews
             }.ToJSON();
         }
 
-        private void RestoreMavlinkDashboardDetachedState()
+        private void RestoreDashboardDetachedState()
         {
-            if (tabMavlinkDashboardDetached || !Settings.Instance.GetBoolean(MavlinkDashboardDetachedKey, false))
+            if (tabDashboardDetached || !Settings.Instance.GetBoolean(DashboardDetachedKey, false))
             {
                 return;
             }
 
-            UndockMavlinkDashboardTab();
+            UndockDashboardTab();
         }
 
-        private void SaveMavlinkDashboardDetachedState(bool detached)
+        private void SaveDashboardDetachedState(bool detached)
         {
-            Settings.Instance[MavlinkDashboardDetachedKey] = detached.ToString();
+            Settings.Instance[DashboardDetachedKey] = detached.ToString();
             try
             {
                 Settings.Instance.Save();
             }
             catch (Exception ex)
             {
-                log.Warn("Failed to save MAVLink dashboard detached state.", ex);
+                log.Warn("Failed to save dashboard detached state.", ex);
             }
         }
 

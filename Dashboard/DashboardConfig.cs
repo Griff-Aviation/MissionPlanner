@@ -4,7 +4,7 @@ using System;
 using System.Collections.Generic;
 using System.IO;
 
-namespace MissionPlanner.MavlinkDashboard
+namespace MissionPlanner.Dashboard
 {
     public enum DashboardValueSourcePreference
     {
@@ -73,21 +73,36 @@ namespace MissionPlanner.MavlinkDashboard
 
     public static class DashboardConfigStore
     {
-        private const string ConfigFileName = "mavlink-dashboard.json";
+        private const string ConfigFileName = "dashboard.json";
+        private static readonly string[] LegacyConfigFileNames = { "currentstate-dashboard.json", "mavlink-dashboard.json" };
 
         public static DashboardConfig LoadOrCreateDefault(Func<DashboardConfig> defaultFactory)
         {
             var path = GetConfigPath();
 
-            if (File.Exists(path))
+            foreach (var candidatePath in GetCandidateConfigPaths())
             {
+                if (!File.Exists(candidatePath))
+                {
+                    continue;
+                }
+
                 try
                 {
-                    var loaded = JsonConvert.DeserializeObject<DashboardConfig>(File.ReadAllText(path));
-                    if (IsUsable(loaded))
+                    var loaded = JsonConvert.DeserializeObject<DashboardConfig>(File.ReadAllText(candidatePath));
+                    if (!IsUsable(loaded))
                     {
-                        return Normalize(loaded);
+                        continue;
                     }
+
+                    var normalized = Normalize(loaded);
+                    if (!string.Equals(candidatePath, path, StringComparison.OrdinalIgnoreCase))
+                    {
+                        // Migrate forward so subsequent saves use the current file name.
+                        Save(normalized);
+                    }
+
+                    return normalized;
                 }
                 catch
                 {
@@ -120,6 +135,26 @@ namespace MissionPlanner.MavlinkDashboard
         private static string GetConfigPath()
         {
             return Path.Combine(Settings.GetUserDataDirectory(), ConfigFileName);
+        }
+
+        private static IEnumerable<string> GetCandidateConfigPaths()
+        {
+            var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+
+            var currentPath = GetConfigPath();
+            if (seen.Add(currentPath))
+            {
+                yield return currentPath;
+            }
+
+            foreach (var legacyFileName in LegacyConfigFileNames)
+            {
+                var legacyPath = Path.Combine(Settings.GetUserDataDirectory(), legacyFileName);
+                if (seen.Add(legacyPath))
+                {
+                    yield return legacyPath;
+                }
+            }
         }
 
         private static bool IsUsable(DashboardConfig config)
